@@ -25,11 +25,11 @@ function filterAvailableStudios(
   });
 }
 
-function calculateFragmentationPenalty(
+function calculateAdjacencyBonus(
   studio: Studio,
   request: BookingRequest,
   existingBookings: Booking[]
-): number {
+): { bonus: number; isPerfectAdjacent: boolean } {
   const studioBookings = existingBookings
     .filter(
       (b) =>
@@ -39,32 +39,42 @@ function calculateFragmentationPenalty(
     )
     .sort((a, b) => a.startTime.getTime() - b.startTime.getTime());
 
-  if (studioBookings.length === 0) return 0;
+  if (studioBookings.length === 0) return { bonus: 0, isPerfectAdjacent: false };
 
   let beforeGap = Infinity;
   let afterGap = Infinity;
+  let isPerfectAdjacent = false;
 
   for (const booking of studioBookings) {
     const gapBefore = differenceInMinutes(request.startTime, booking.endTime);
-    if (gapBefore > 0 && gapBefore < beforeGap) {
+    if (gapBefore >= 0 && gapBefore < beforeGap) {
       beforeGap = gapBefore;
     }
 
     const gapAfter = differenceInMinutes(booking.startTime, request.endTime);
-    if (gapAfter > 0 && gapAfter < afterGap) {
+    if (gapAfter >= 0 && gapAfter < afterGap) {
       afterGap = gapAfter;
     }
   }
 
-  const minGap = Math.min(beforeGap, afterGap);
-  if (minGap < 120 && minGap > 0) {
-    return (120 - minGap) / 120 * 100;
-  }
-
   if (beforeGap === 0 || afterGap === 0) {
-    return -50;
+    isPerfectAdjacent = true;
+    return { bonus: 100, isPerfectAdjacent: true };
   }
 
+  const minGap = Math.min(beforeGap, afterGap);
+  if (minGap < 120) {
+    return { bonus: (120 - minGap) / 120 * 80, isPerfectAdjacent: false };
+  }
+
+  return { bonus: 0, isPerfectAdjacent: false };
+}
+
+function calculateFragmentationPenalty(
+  studio: Studio,
+  request: BookingRequest,
+  existingBookings: Booking[]
+): number {
   return 0;
 }
 
@@ -120,14 +130,14 @@ function calculateAllocationScore(
 ): number {
   let score = 0;
 
-  const fragmentationPenalty = calculateFragmentationPenalty(studio, request, existingBookings);
-  score += (100 - Math.max(0, fragmentationPenalty)) * 0.4;
+  const { bonus: adjacencyBonus } = calculateAdjacencyBonus(studio, request, existingBookings);
+  score += adjacencyBonus * 0.5;
 
   const usageRate = calculateMonthlyUsageRate(studio, existingBookings);
-  score += (100 - usageRate) * 0.3;
+  score += (100 - usageRate) * 0.25;
 
   const specMatchScore = calculateSpecMatchScore(studio, request);
-  score += specMatchScore * 0.3;
+  score += specMatchScore * 0.25;
 
   return Math.round(score);
 }
@@ -140,11 +150,11 @@ function generateAllocationReason(
   const reasons: string[] = [];
   const attendeeCount = request.attendeeCount || 1;
 
-  const fragPenalty = calculateFragmentationPenalty(studio, request, existingBookings);
-  if (fragPenalty <= 0) {
-    reasons.push('可与相邻预约合并为连续时段');
-  } else if (fragPenalty < 50) {
-    reasons.push('碎片化风险低');
+  const { isPerfectAdjacent, bonus } = calculateAdjacencyBonus(studio, request, existingBookings);
+  if (isPerfectAdjacent) {
+    reasons.push('完美贴合已有预约形成连续档期');
+  } else if (bonus > 40) {
+    reasons.push('与已有预约接近，碎片化风险低');
   }
 
   const usageRate = calculateMonthlyUsageRate(studio, existingBookings);

@@ -1,5 +1,5 @@
-import { useState, Fragment } from 'react';
-import type { MouseEvent, ReactNode } from 'react';
+import { useState, Fragment, useMemo } from 'react';
+import type { MouseEvent, ReactNode, ChangeEvent } from 'react';
 import {
   Download,
   CheckCircle,
@@ -10,52 +10,151 @@ import {
   PiggyBank,
   Users,
   Wallet,
+  RotateCcw,
+  AlertTriangle,
 } from 'lucide-react';
+import { format, subMonths, isSameMonth } from 'date-fns';
+import { zhCN } from 'date-fns/locale';
 import { useAppStore } from '@/store/useAppStore';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { StatCard } from '@/components/ui/StatCard';
+import { Modal } from '@/components/ui/Modal';
 import { formatCurrency, formatPercent } from '@/utils/formatters';
-import { formatDateTime, formatMonth, isInCurrentMonth } from '@/utils/dateUtils';
-import type { Settlement } from '@/types';
+import { formatDateTime, formatMonth } from '@/utils/dateUtils';
+import type { Settlement, SettlementStatus } from '@/types';
 
 export function Settlement() {
   const {
     settlements,
+    artists,
+    batchMarkSettlementsPaid,
     markSettlementPaid,
     getBookingById,
     getArtistById,
     getStudioById,
   } = useAppStore();
 
+  const currentDate = new Date();
+  const defaultMonth = format(currentDate, 'yyyy-MM');
+
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
   const [isExporting, setIsExporting] = useState(false);
+  const [selectedMonth, setSelectedMonth] = useState<string>(defaultMonth);
+  const [selectedArtistId, setSelectedArtistId] = useState<string>('all');
+  const [selectedStatus, setSelectedStatus] = useState<SettlementStatus | 'all'>('all');
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [isBatchModalOpen, setIsBatchModalOpen] = useState(false);
 
-  const currentMonthSettlements = settlements.filter((s) =>
-    isInCurrentMonth(new Date(s.settlementDate))
+  const monthOptions = useMemo(() => {
+    const options: { value: string; label: string }[] = [];
+    for (let i = 0; i < 12; i++) {
+      const date = subMonths(currentDate, i);
+      options.push({
+        value: format(date, 'yyyy-MM'),
+        label: format(date, 'yyyy年MM月', { locale: zhCN }),
+      });
+    }
+    return options;
+  }, [currentDate]);
+
+  const filteredSettlements = useMemo(() => {
+    return settlements.filter((s) => {
+      const settlementDate = new Date(s.settlementDate);
+      const [year, month] = selectedMonth.split('-').map(Number);
+      const filterDate = new Date(year, month - 1, 1);
+      if (!isSameMonth(settlementDate, filterDate)) {
+        return false;
+      }
+      if (selectedArtistId !== 'all') {
+        const booking = getBookingById(s.bookingId);
+        if (!booking || booking.artistId !== selectedArtistId) {
+          return false;
+        }
+      }
+      if (selectedStatus !== 'all' && s.status !== selectedStatus) {
+        return false;
+      }
+      return true;
+    }).sort(
+      (a, b) =>
+        new Date(b.settlementDate).getTime() -
+        new Date(a.settlementDate).getTime()
+    );
+  }, [settlements, selectedMonth, selectedArtistId, selectedStatus, getBookingById]);
+
+  const totalRevenue = useMemo(
+    () => filteredSettlements.reduce((sum, s) => sum + s.totalAmount, 0),
+    [filteredSettlements]
   );
 
-  const totalRevenue = currentMonthSettlements.reduce(
-    (sum, s) => sum + s.totalAmount,
-    0
+  const totalCommission = useMemo(
+    () => filteredSettlements.reduce((sum, s) => sum + s.commissionAmount, 0),
+    [filteredSettlements]
   );
 
-  const totalCommission = currentMonthSettlements.reduce(
-    (sum, s) => sum + s.commissionAmount,
-    0
+  const totalArtistAmount = useMemo(
+    () => filteredSettlements.reduce((sum, s) => sum + s.artistAmount, 0),
+    [filteredSettlements]
   );
 
-  const totalArtistAmount = currentMonthSettlements.reduce(
-    (sum, s) => sum + s.artistAmount,
-    0
+  const settledAmount = useMemo(
+    () =>
+      filteredSettlements
+        .filter((s) => s.status === 'SETTLED')
+        .reduce((sum, s) => sum + s.artistAmount, 0),
+    [filteredSettlements]
   );
 
-  const settledAmount = currentMonthSettlements
-    .filter((s) => s.status === 'SETTLED')
-    .reduce((sum, s) => sum + s.artistAmount, 0);
+  const unsettledAmount = useMemo(
+    () =>
+      filteredSettlements
+        .filter((s) => s.status === 'UNSETTLED')
+        .reduce((sum, s) => sum + s.artistAmount, 0),
+    [filteredSettlements]
+  );
 
-  const unsettledAmount = currentMonthSettlements
-    .filter((s) => s.status === 'UNSETTLED')
-    .reduce((sum, s) => sum + s.artistAmount, 0);
+  const selectableUnsettledIds = useMemo(
+    () =>
+      filteredSettlements
+        .filter((s) => s.status === 'UNSETTLED')
+        .map((s) => s.id),
+    [filteredSettlements]
+  );
+
+  const isAllSelected = useMemo(() => {
+    if (selectableUnsettledIds.length === 0) return false;
+    return selectableUnsettledIds.every((id) => selectedIds.has(id));
+  }, [selectableUnsettledIds, selectedIds]);
+
+  const selectedSettlements = useMemo(
+    () => filteredSettlements.filter((s) => selectedIds.has(s.id)),
+    [filteredSettlements, selectedIds]
+  );
+
+  const selectedSummary = useMemo(() => {
+    const totalAmount = selectedSettlements.reduce((sum, s) => sum + s.totalAmount, 0);
+    const totalCommissionAmount = selectedSettlements.reduce(
+      (sum, s) => sum + s.commissionAmount,
+      0
+    );
+    const totalArtistEarnings = selectedSettlements.reduce(
+      (sum, s) => sum + s.artistAmount,
+      0
+    );
+    return {
+      count: selectedSettlements.length,
+      totalAmount,
+      totalCommissionAmount,
+      totalArtistEarnings,
+    };
+  }, [selectedSettlements]);
+
+  const handleResetFilters = () => {
+    setSelectedMonth(defaultMonth);
+    setSelectedArtistId('all');
+    setSelectedStatus('all');
+    setSelectedIds(new Set());
+  };
 
   const toggleRow = (id: string) => {
     const newExpanded = new Set(expandedRows);
@@ -72,12 +171,39 @@ export function Settlement() {
     markSettlementPaid(settlementId);
   };
 
+  const handleSelectRow = (id: string, e: ChangeEvent<HTMLInputElement>) => {
+    e.stopPropagation();
+    const newSelected = new Set(selectedIds);
+    if (e.target.checked) {
+      newSelected.add(id);
+    } else {
+      newSelected.delete(id);
+    }
+    setSelectedIds(newSelected);
+  };
+
+  const handleSelectAll = (e: ChangeEvent<HTMLInputElement>) => {
+    e.stopPropagation();
+    if (e.target.checked) {
+      setSelectedIds(new Set(selectableUnsettledIds));
+    } else {
+      setSelectedIds(new Set());
+    }
+  };
+
+  const handleBatchConfirm = () => {
+    batchMarkSettlementsPaid(Array.from(selectedIds));
+    setSelectedIds(new Set());
+    setIsBatchModalOpen(false);
+  };
+
   const handleExport = async () => {
     setIsExporting(true);
 
     await new Promise((resolve) => setTimeout(resolve, 1000));
 
     const headers = [
+      '结算单号',
       '订单号',
       '艺人',
       '录音棚',
@@ -90,11 +216,12 @@ export function Settlement() {
       '结算日期',
     ];
 
-    const rows = currentMonthSettlements.map((s) => {
+    const rows = filteredSettlements.map((s) => {
       const booking = getBookingById(s.bookingId);
       const artist = booking ? getArtistById(booking.artistId) : undefined;
       const studio = booking?.studioId ? getStudioById(booking.studioId) : undefined;
       return [
+        s.id,
         s.bookingId,
         artist?.name || '未知',
         studio?.name || '未分配',
@@ -110,7 +237,7 @@ export function Settlement() {
 
     const csvContent = [
       headers.join(','),
-      ...rows.map((row) => row.join(',')),
+      ...rows.map((row) => row.map((cell) => `"${cell}"`).join(',')),
     ].join('\n');
 
     const BOM = '\uFEFF';
@@ -120,7 +247,8 @@ export function Settlement() {
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `对账单_${formatMonth(new Date())}.csv`;
+    const [year, month] = selectedMonth.split('-');
+    link.download = `对账单_${year}年${month}月.csv`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -130,6 +258,29 @@ export function Settlement() {
   };
 
   const columns = [
+    {
+      key: 'select',
+      header: (
+        <input
+          type="checkbox"
+          checked={isAllSelected}
+          onChange={handleSelectAll}
+          disabled={selectableUnsettledIds.length === 0}
+          className="w-4 h-4 accent-gold cursor-pointer disabled:cursor-not-allowed disabled:opacity-50"
+        />
+      ),
+      width: '40px',
+      render: (row: Settlement) => (
+        <input
+          type="checkbox"
+          checked={selectedIds.has(row.id)}
+          onChange={(e) => handleSelectRow(row.id, e)}
+          disabled={row.status === 'SETTLED'}
+          onClick={(e) => e.stopPropagation()}
+          className="w-4 h-4 accent-gold cursor-pointer disabled:cursor-not-allowed disabled:opacity-50"
+        />
+      ),
+    },
     {
       key: 'expand',
       header: '',
@@ -365,14 +516,75 @@ export function Settlement() {
         </div>
         <button
           onClick={handleExport}
-          disabled={isExporting || currentMonthSettlements.length === 0}
+          disabled={isExporting || filteredSettlements.length === 0}
           className="btn-gold flex items-center gap-2"
         >
           <Download
             className={`w-5 h-5 ${isExporting ? 'animate-bounce' : ''}`}
           />
-          {isExporting ? '导出中...' : '导出月度对账单'}
+          {isExporting ? '导出中...' : '导出筛选结果'}
         </button>
+      </div>
+
+      <div className="card">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 items-end">
+          <div>
+            <label className="block text-sm font-medium text-text-muted mb-2">
+              月份
+            </label>
+            <select
+              value={selectedMonth}
+              onChange={(e) => setSelectedMonth(e.target.value)}
+              className="input-field"
+            >
+              {monthOptions.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-text-muted mb-2">
+              艺人
+            </label>
+            <select
+              value={selectedArtistId}
+              onChange={(e) => setSelectedArtistId(e.target.value)}
+              className="input-field"
+            >
+              <option value="all">全部艺人</option>
+              {artists.map((artist) => (
+                <option key={artist.id} value={artist.id}>
+                  {artist.name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-text-muted mb-2">
+              结算状态
+            </label>
+            <select
+              value={selectedStatus}
+              onChange={(e) => setSelectedStatus(e.target.value as SettlementStatus | 'all')}
+              className="input-field"
+            >
+              <option value="all">全部状态</option>
+              <option value="UNSETTLED">待结算</option>
+              <option value="SETTLED">已结算</option>
+            </select>
+          </div>
+          <div className="flex justify-end">
+            <button
+              onClick={handleResetFilters}
+              className="btn-outline flex items-center gap-2"
+            >
+              <RotateCcw className="w-4 h-4" />
+              重置筛选
+            </button>
+          </div>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -403,6 +615,31 @@ export function Settlement() {
       </div>
 
       <div className="card">
+        {selectedIds.size > 0 && (
+          <div className="sticky top-0 z-10 mb-4 -mx-6 -mt-6 px-6 py-4 bg-gradient-to-r from-gold/20 via-gold/10 to-gold/20 border-b border-gold/20 rounded-t-xl flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <span className="text-gold font-medium">
+                已选中 {selectedIds.size} 条记录
+              </span>
+            </div>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => setSelectedIds(new Set())}
+                className="btn-ghost text-sm"
+              >
+                取消选择
+              </button>
+              <button
+                onClick={() => setIsBatchModalOpen(true)}
+                className="btn-gold flex items-center gap-2 text-sm"
+              >
+                <CheckCircle className="w-4 h-4" />
+                批量标记已结算
+              </button>
+            </div>
+          </div>
+        )}
+
         <h2 className="font-display text-xl font-semibold text-text-primary mb-4">
           对账单列表
         </h2>
@@ -423,7 +660,7 @@ export function Settlement() {
               </tr>
             </thead>
             <tbody>
-              {settlements.length === 0 ? (
+              {filteredSettlements.length === 0 ? (
                 <tr>
                   <td
                     colSpan={columns.length}
@@ -433,43 +670,98 @@ export function Settlement() {
                   </td>
                 </tr>
               ) : (
-                settlements
-                  .sort(
-                    (a, b) =>
-                      new Date(b.settlementDate).getTime() -
-                      new Date(a.settlementDate).getTime()
-                  )
-                  .map((row, index) => (
-                    <Fragment key={row.id}>
-                      <tr
-                        onClick={() => toggleRow(row.id)}
-                        className={`border-b border-gold/5 transition-colors cursor-pointer hover:bg-gold/5 ${
-                          index % 2 === 0 ? 'bg-bg-secondary/30' : ''
-                        }`}
-                      >
-                        {columns.map((col) => (
-                          <td
-                            key={col.key as string}
-                            className="py-4 px-4 text-sm text-text-secondary"
-                          >
-                            {col.render
-                              ? col.render(row)
-                              : (row[col.key as keyof Settlement] as ReactNode)}
-                          </td>
-                        ))}
-                      </tr>
-                      <tr className="bg-bg-secondary/50">
-                        <td colSpan={columns.length} className="p-0">
-                          {renderCalculationDetail(row)}
+                filteredSettlements.map((row, index) => (
+                  <Fragment key={row.id}>
+                    <tr
+                      onClick={() => toggleRow(row.id)}
+                      className={`border-b border-gold/5 transition-colors cursor-pointer hover:bg-gold/5 ${
+                        index % 2 === 0 ? 'bg-bg-secondary/30' : ''
+                      }`}
+                    >
+                      {columns.map((col) => (
+                        <td
+                          key={col.key as string}
+                          className="py-4 px-4 text-sm text-text-secondary"
+                        >
+                          {col.render
+                            ? col.render(row)
+                            : (row[col.key as keyof Settlement] as ReactNode)}
                         </td>
-                      </tr>
-                    </Fragment>
-                  ))
+                      ))}
+                    </tr>
+                    <tr className="bg-bg-secondary/50">
+                      <td colSpan={columns.length} className="p-0">
+                        {renderCalculationDetail(row)}
+                      </td>
+                    </tr>
+                  </Fragment>
+                ))
               )}
             </tbody>
           </table>
         </div>
       </div>
+
+      <Modal
+        isOpen={isBatchModalOpen}
+        onClose={() => setIsBatchModalOpen(false)}
+        title="批量标记已结算"
+        size="md"
+      >
+        <div className="space-y-6">
+          <div className="flex items-start gap-3 p-4 bg-neon-yellow/10 border border-neon-yellow/20 rounded-xl">
+            <AlertTriangle className="w-5 h-5 text-neon-yellow flex-shrink-0 mt-0.5" />
+            <div>
+              <p className="font-medium text-text-primary">确认批量操作</p>
+              <p className="text-sm text-text-muted mt-1">
+                此操作将把选中的记录标记为已结算，且无法撤销。
+              </p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 gap-4">
+            <div className="bg-bg-tertiary/50 rounded-xl p-4 border border-gold/10">
+              <div className="text-sm text-text-muted mb-1">选中记录数</div>
+              <div className="font-display text-2xl font-bold text-gold">
+                {selectedSummary.count} 条
+              </div>
+            </div>
+
+            <div className="grid grid-cols-3 gap-4">
+              <div className="bg-bg-tertiary/50 rounded-xl p-4 border border-gold/10">
+                <div className="text-sm text-text-muted mb-1">涉及总金额</div>
+                <div className="font-display text-xl font-bold text-text-primary">
+                  {formatCurrency(selectedSummary.totalAmount)}
+                </div>
+              </div>
+              <div className="bg-bg-tertiary/50 rounded-xl p-4 border border-gold/10">
+                <div className="text-sm text-text-muted mb-1">总抽成金额</div>
+                <div className="font-display text-xl font-bold text-neon-red">
+                  {formatCurrency(selectedSummary.totalCommissionAmount)}
+                </div>
+              </div>
+              <div className="bg-bg-tertiary/50 rounded-xl p-4 border border-gold/10">
+                <div className="text-sm text-text-muted mb-1">艺人总所得</div>
+                <div className="font-display text-xl font-bold text-neon-green">
+                  {formatCurrency(selectedSummary.totalArtistEarnings)}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="flex justify-end gap-3 pt-4 border-t border-gold/10">
+            <button
+              onClick={() => setIsBatchModalOpen(false)}
+              className="btn-outline"
+            >
+              取消
+            </button>
+            <button onClick={handleBatchConfirm} className="btn-gold">
+              确认标记已结算
+            </button>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }

@@ -2,7 +2,6 @@ import { useState, useMemo } from 'react';
 import {
   Plus,
   TrendingUp,
-  Calculator,
   Edit2,
   Trash2,
   Save,
@@ -32,23 +31,8 @@ import { CommissionTier } from '@/types';
 import { Modal } from '@/components/ui/Modal';
 import { StatCard } from '@/components/ui/StatCard';
 import { formatCurrency, formatPercent } from '@/utils/formatters';
-import { simulateCommission } from '@/services/commission.service';
-
-interface TierFormData {
-  minAmount: number;
-  maxAmount: number;
-  rate: number;
-  tierOrder: number;
-  isActive: boolean;
-}
-
-interface TierHistoryRecord {
-  id: string;
-  version: string;
-  timestamp: Date;
-  description: string;
-  tiers: CommissionTier[];
-}
+import { MonthlyView } from './MonthlyView';
+import { getTierName, tierHistoryData, TierHistoryRecord, TierFormData } from './commissionConstants';
 
 const initialFormData: TierFormData = {
   minAmount: 0,
@@ -58,8 +42,6 @@ const initialFormData: TierFormData = {
   isActive: true,
 };
 
-const tierNames = ['第一档', '第二档', '第三档', '第四档', '第五档', '第六档', '第七档', '第八档', '第九档', '第十档'];
-
 export function Commission() {
   const { tiers, updateTier, addTier } = useAppStore();
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -67,32 +49,7 @@ export function Commission() {
   const [formData, setFormData] = useState<TierFormData>(initialFormData);
   const [simulateAmount, setSimulateAmount] = useState<string>('50000');
   const [showHistory, setShowHistory] = useState(false);
-  const [tierHistory] = useState<TierHistoryRecord[]>([
-    {
-      id: 'history-001',
-      version: 'v1.0',
-      timestamp: new Date('2026-06-01'),
-      description: '初始版本，建立基础阶梯抽成体系',
-      tiers: [
-        { id: 'tier-001', minAmount: 0, maxAmount: 100000, rate: 10, tierOrder: 1, isActive: true },
-        { id: 'tier-002', minAmount: 100000, maxAmount: 300000, rate: 15, tierOrder: 2, isActive: true },
-        { id: 'tier-003', minAmount: 300000, maxAmount: 500000, rate: 20, tierOrder: 3, isActive: true },
-        { id: 'tier-004', minAmount: 500000, maxAmount: 999999999, rate: 25, tierOrder: 4, isActive: true },
-      ],
-    },
-    {
-      id: 'history-002',
-      version: 'v1.1',
-      timestamp: new Date('2026-06-10'),
-      description: '调整高档位抽成比例，提升高业绩激励',
-      tiers: [
-        { id: 'tier-001', minAmount: 0, maxAmount: 100000, rate: 10, tierOrder: 1, isActive: true },
-        { id: 'tier-002', minAmount: 100000, maxAmount: 300000, rate: 15, tierOrder: 2, isActive: true },
-        { id: 'tier-003', minAmount: 300000, maxAmount: 500000, rate: 20, tierOrder: 3, isActive: true },
-        { id: 'tier-004', minAmount: 500000, maxAmount: 999999999, rate: 25, tierOrder: 4, isActive: true },
-      ],
-    },
-  ]);
+  const [tierHistory] = useState<TierHistoryRecord[]>(tierHistoryData);
 
   const sortedTiers = useMemo(() => {
     return [...tiers].sort((a, b) => a.tierOrder - b.tierOrder);
@@ -128,16 +85,6 @@ export function Commission() {
 
     return data;
   }, [sortedTiers]);
-
-  const simulationResult = useMemo(() => {
-    const amount = parseFloat(simulateAmount) || 0;
-    return simulateCommission(amount, tiers);
-  }, [simulateAmount, tiers]);
-
-  const commissionAmount = useMemo(() => {
-    const amount = parseFloat(simulateAmount) || 0;
-    return Math.round(amount * (simulationResult.rate / 100));
-  }, [simulateAmount, simulationResult.rate]);
 
   const handleAddTier = () => {
     const maxOrder = sortedTiers.length > 0 ? Math.max(...sortedTiers.map((t) => t.tierOrder)) + 1 : 1;
@@ -192,10 +139,6 @@ export function Commission() {
 
     updateTier(currentTier.id, { tierOrder: targetTier.tierOrder });
     updateTier(targetTier.id, { tierOrder: currentTier.tierOrder });
-  };
-
-  const getTierName = (tierOrder: number) => {
-    return tierNames[tierOrder - 1] || `第${tierOrder}档`;
   };
 
   const CustomTooltip = ({ active, payload, label }: { active?: boolean; payload?: Array<{ value: number }>; label?: string }) => {
@@ -410,76 +353,7 @@ export function Commission() {
           </div>
 
           <div className="space-y-6">
-            <div className="card">
-              <div className="flex items-center gap-3 mb-6">
-                <div className="p-3 bg-gold/10 rounded-xl">
-                  <Calculator className="w-6 h-6 text-gold" />
-                </div>
-                <h2 className="text-xl font-display font-semibold text-text-primary">模拟计算器</h2>
-              </div>
-              <div className="space-y-4">
-                <div>
-                  <label className="block text-sm font-medium text-text-primary mb-2">预计成交额</label>
-                  <div className="relative">
-                    <span className="absolute left-4 top-1/2 -translate-y-1/2 text-text-muted">¥</span>
-                    <input
-                      type="number"
-                      value={simulateAmount}
-                      onChange={(e) => setSimulateAmount(e.target.value)}
-                      className="input-field pl-8"
-                      placeholder="请输入预计成交额"
-                      min="0"
-                    />
-                  </div>
-                </div>
-
-                <div className="bg-gradient-to-br from-gold/10 to-gold-dark/5 rounded-xl p-4 border border-gold/20">
-                  <div className="space-y-4">
-                    <div className="flex items-center justify-between">
-                      <span className="text-text-muted">当前档位</span>
-                      <span className="text-text-primary font-medium">
-                        {getTierName(simulationResult.tier.tierOrder)}
-                      </span>
-                    </div>
-                    <div className="flex items-center justify-between">
-                      <span className="text-text-muted">抽成比例</span>
-                      <span className="text-gold font-bold text-xl">{formatPercent(simulationResult.rate)}</span>
-                    </div>
-                    <div className="border-t border-gold/20 pt-4">
-                      <div className="flex items-center justify-between">
-                        <span className="text-text-muted">抽成金额</span>
-                        <span className="text-gold font-bold text-2xl font-display">
-                          {formatCurrency(commissionAmount)}
-                        </span>
-                      </div>
-                    </div>
-                    {simulationResult.nextTier && (
-                      <>
-                        <div className="mt-3 p-3 bg-bg-tertiary rounded-lg">
-                          <p className="text-sm text-text-muted">
-                            距离下一档位还差{' '}
-                            <span className="text-gold font-medium">
-                              {formatCurrency(simulationResult.amountToNextTier)}
-                            </span>
-                          </p>
-                          <div className="mt-2 progress-bar">
-                            <div
-                              className="progress-bar-fill"
-                              style={{
-                                width: `${Math.max(0, 100 - (simulationResult.amountToNextTier / (simulationResult.nextTier.maxAmount - simulationResult.tier.maxAmount)) * 100)}%`,
-                              }}
-                            />
-                          </div>
-                        </div>
-                        <p className="text-xs text-text-muted mt-2">
-                          下一档位: {formatPercent(simulationResult.nextTier.rate)}
-                        </p>
-                      </>
-                    )}
-                  </div>
-                </div>
-              </div>
-            </div>
+            <MonthlyView simulateAmount={simulateAmount} setSimulateAmount={setSimulateAmount} />
 
             {showHistory && (
               <div className="card">
@@ -526,7 +400,7 @@ export function Commission() {
                       </div>
                     </div>
                   ))}
-                </div>
+              </div>
               </div>
             )}
           </div>

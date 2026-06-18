@@ -20,6 +20,71 @@ import { calculateSettlement } from '../services/commission.service';
 import { calculateBookingAmount } from '../services/studio.service';
 import { generateId } from '../utils/formatters';
 
+const STORAGE_KEY = 'aurora-studio-data-v1';
+
+interface PersistedData {
+  studios: Studio[];
+  artists: Artist[];
+  bookings: Booking[];
+  tiers: CommissionTier[];
+  settlements: Settlement[];
+  masters: MasterDelivery[];
+}
+
+function parseDateFields<T>(obj: any): T {
+  if (!obj) return obj as T;
+  if (Array.isArray(obj)) {
+    return obj.map((item) => parseDateFields(item)) as unknown as T;
+  }
+  if (typeof obj === 'object') {
+    const result: any = {};
+    for (const [key, value] of Object.entries(obj)) {
+      if (
+        typeof value === 'string' &&
+        (key.includes('Time') || key.includes('Date') || key.includes('At')) &&
+        !isNaN(Date.parse(value))
+      ) {
+        result[key] = new Date(value);
+      } else if (typeof value === 'object' && value !== null) {
+        result[key] = parseDateFields(value);
+      } else {
+        result[key] = value;
+      }
+    }
+    return result as T;
+  }
+  return obj as T;
+}
+
+function loadFromStorage(): PersistedData | null {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return null;
+    const data = JSON.parse(raw);
+    return {
+      studios: parseDateFields<Studio[]>(data.studios || []),
+      artists: parseDateFields<Artist[]>(data.artists || []),
+      bookings: parseDateFields<Booking[]>(data.bookings || []),
+      tiers: parseDateFields<CommissionTier[]>(data.tiers || []),
+      settlements: parseDateFields<Settlement[]>(data.settlements || []),
+      masters: parseDateFields<MasterDelivery[]>(data.masters || []),
+    };
+  } catch (e) {
+    console.error('Failed to load from localStorage', e);
+    return null;
+  }
+}
+
+function saveToStorage(data: PersistedData) {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+  } catch (e) {
+    console.error('Failed to save to localStorage', e);
+  }
+}
+
+const persisted = loadFromStorage();
+
 interface AppState {
   studios: Studio[];
   artists: Artist[];
@@ -29,6 +94,9 @@ interface AppState {
   masters: MasterDelivery[];
   currentUser: { role: 'ADMIN' | 'ARTIST'; artistId?: string };
   lastAllocationResults: Map<string, AllocationResult>;
+
+  persist: () => void;
+  resetToDefaults: () => void;
 
   setCurrentUser: (user: { role: 'ADMIN' | 'ARTIST'; artistId?: string }) => void;
 
@@ -49,6 +117,7 @@ interface AppState {
 
   settleBooking: (bookingId: string) => void;
   markSettlementPaid: (settlementId: string) => void;
+  batchMarkSettlementsPaid: (settlementIds: string[]) => void;
 
   addMasterDelivery: (master: Omit<MasterDelivery, 'id'>) => void;
   confirmMasterDelivery: (masterId: string) => void;
@@ -61,31 +130,55 @@ interface AppState {
 }
 
 export const useAppStore = create<AppState>((set, get) => ({
-  studios: mockStudios,
-  artists: mockArtists,
-  bookings: mockBookings,
-  tiers: mockTiers,
-  settlements: mockSettlements,
-  masters: mockMasters,
+  studios: persisted?.studios && persisted.studios.length > 0 ? persisted.studios : mockStudios,
+  artists: persisted?.artists && persisted.artists.length > 0 ? persisted.artists : mockArtists,
+  bookings: persisted?.bookings && persisted.bookings.length > 0 ? persisted.bookings : mockBookings,
+  tiers: persisted?.tiers && persisted.tiers.length > 0 ? persisted.tiers : mockTiers,
+  settlements:
+    persisted?.settlements && persisted.settlements.length > 0 ? persisted.settlements : mockSettlements,
+  masters: persisted?.masters && persisted.masters.length > 0 ? persisted.masters : mockMasters,
   currentUser: { role: 'ADMIN' },
   lastAllocationResults: new Map(),
 
+  persist: () => {
+    const { studios, artists, bookings, tiers, settlements, masters } = get();
+    saveToStorage({ studios, artists, bookings, tiers, settlements, masters });
+  },
+
+  resetToDefaults: () => {
+    localStorage.removeItem(STORAGE_KEY);
+    set({
+      studios: mockStudios,
+      artists: mockArtists,
+      bookings: mockBookings,
+      tiers: mockTiers,
+      settlements: mockSettlements,
+      masters: mockMasters,
+    });
+  },
+
   setCurrentUser: (user) => set({ currentUser: user }),
 
-  addStudio: (studio) =>
+  addStudio: (studio) => {
     set((state) => ({
       studios: [...state.studios, { ...studio, id: generateId() }],
-    })),
+    }));
+    get().persist();
+  },
 
-  updateStudio: (id, updates) =>
+  updateStudio: (id, updates) => {
     set((state) => ({
       studios: state.studios.map((s) => (s.id === id ? { ...s, ...updates } : s)),
-    })),
+    }));
+    get().persist();
+  },
 
-  deleteStudio: (id) =>
+  deleteStudio: (id) => {
     set((state) => ({
       studios: state.studios.filter((s) => s.id !== id),
-    })),
+    }));
+    get().persist();
+  },
 
   createBooking: (request) => {
     const newBooking: Booking = {
@@ -102,6 +195,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       attendeeCount: request.attendeeCount,
     };
     set((state) => ({ bookings: [...state.bookings, newBooking] }));
+    get().persist();
     return newBooking;
   },
 
@@ -140,6 +234,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         ),
         lastAllocationResults: new Map(state.lastAllocationResults).set(bookingId, result),
       }));
+      get().persist();
     }
 
     return result;
@@ -173,16 +268,19 @@ export const useAppStore = create<AppState>((set, get) => ({
         lastAllocationResults: results,
       };
     });
+    get().persist();
 
     return results;
   },
 
-  confirmBooking: (bookingId) =>
+  confirmBooking: (bookingId) => {
     set((state) => ({
       bookings: state.bookings.map((b) =>
         b.id === bookingId ? { ...b, status: 'CONFIRMED' } : b
       ),
-    })),
+    }));
+    get().persist();
+  },
 
   completeBooking: (bookingId) => {
     const { bookings, tiers, settlements } = get();
@@ -214,29 +312,38 @@ export const useAppStore = create<AppState>((set, get) => ({
         settlements: [...state.settlements, newSettlement],
       }));
     }
+    get().persist();
   },
 
-  cancelBooking: (bookingId) =>
+  cancelBooking: (bookingId) => {
     set((state) => ({
       bookings: state.bookings.map((b) =>
         b.id === bookingId ? { ...b, status: 'CANCELLED' } : b
       ),
-    })),
+    }));
+    get().persist();
+  },
 
-  updateBooking: (id, updates) =>
+  updateBooking: (id, updates) => {
     set((state) => ({
       bookings: state.bookings.map((b) => (b.id === id ? { ...b, ...updates } : b)),
-    })),
+    }));
+    get().persist();
+  },
 
-  updateTier: (id, updates) =>
+  updateTier: (id, updates) => {
     set((state) => ({
       tiers: state.tiers.map((t) => (t.id === id ? { ...t, ...updates } : t)),
-    })),
+    }));
+    get().persist();
+  },
 
-  addTier: (tier) =>
+  addTier: (tier) => {
     set((state) => ({
       tiers: [...state.tiers, { ...tier, id: generateId() }],
-    })),
+    }));
+    get().persist();
+  },
 
   settleBooking: (bookingId) => {
     const { bookings, tiers } = get();
@@ -259,26 +366,42 @@ export const useAppStore = create<AppState>((set, get) => ({
     set((state) => ({
       settlements: [...state.settlements, newSettlement],
     }));
+    get().persist();
   },
 
-  markSettlementPaid: (settlementId) =>
+  markSettlementPaid: (settlementId) => {
     set((state) => ({
       settlements: state.settlements.map((s) =>
         s.id === settlementId ? { ...s, status: 'SETTLED' } : s
       ),
-    })),
+    }));
+    get().persist();
+  },
 
-  addMasterDelivery: (master) =>
+  batchMarkSettlementsPaid: (settlementIds) => {
+    set((state) => ({
+      settlements: state.settlements.map((s) =>
+        settlementIds.includes(s.id) ? { ...s, status: 'SETTLED' } : s
+      ),
+    }));
+    get().persist();
+  },
+
+  addMasterDelivery: (master) => {
     set((state) => ({
       masters: [...state.masters, { ...master, id: generateId() }],
-    })),
+    }));
+    get().persist();
+  },
 
-  confirmMasterDelivery: (masterId) =>
+  confirmMasterDelivery: (masterId) => {
     set((state) => ({
       masters: state.masters.map((m) =>
         m.id === masterId ? { ...m, isConfirmed: true, confirmedAt: new Date() } : m
       ),
-    })),
+    }));
+    get().persist();
+  },
 
   getBookingById: (id) => get().bookings.find((b) => b.id === id),
   getArtistById: (id) => get().artists.find((a) => a.id === id),

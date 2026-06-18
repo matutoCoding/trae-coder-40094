@@ -1,4 +1,5 @@
 import { useState, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   Music2,
   Users,
@@ -11,6 +12,8 @@ import {
   ChevronLeft,
   ChevronRight,
   GripVertical,
+  FileText,
+  Disc,
 } from 'lucide-react';
 import {
   format,
@@ -26,7 +29,8 @@ import { zhCN } from 'date-fns/locale';
 import { useAppStore } from '@/store/useAppStore';
 import { Studio, StudioType, Booking } from '@/types';
 import { Modal } from '@/components/ui/Modal';
-import { formatCurrency } from '@/utils/formatters';
+import { StatusBadge } from '@/components/ui/StatusBadge';
+import { formatCurrency, formatDuration } from '@/utils/formatters';
 import { getStudioTypeLabel, getBookingStatusColor } from '@/utils/dateUtils';
 import { getAllStudiosUsageStats } from '@/services/studio.service';
 
@@ -53,7 +57,17 @@ const initialFormData: StudioFormData = {
 const TIME_SLOTS = Array.from({ length: 14 }, (_, i) => i + 9);
 
 export function Studios() {
-  const { studios, bookings, addStudio, updateStudio, deleteStudio } = useAppStore();
+  const navigate = useNavigate();
+  const {
+    studios,
+    bookings,
+    addStudio,
+    updateStudio,
+    deleteStudio,
+    getArtistById,
+    getStudioById,
+    getMastersByBookingId,
+  } = useAppStore();
   const [viewMode, setViewMode] = useState<ViewMode>('list');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingStudio, setEditingStudio] = useState<Studio | null>(null);
@@ -61,6 +75,9 @@ export function Studios() {
   const [weekStart, setWeekStart] = useState(() =>
     startOfWeek(new Date(), { weekStartsOn: 1 })
   );
+  const [isBookingModalOpen, setIsBookingModalOpen] = useState(false);
+  const [selectedBooking, setSelectedBooking] = useState<Booking | null>(null);
+  const [clickedBookingId, setClickedBookingId] = useState<string | null>(null);
 
   const usageStats = useMemo(() => {
     return getAllStudiosUsageStats(studios, bookings);
@@ -138,6 +155,17 @@ export function Studios() {
     return studioBookings.filter(
       (b) => b.studioId === studioId && isSameDay(b.startTime, day)
     );
+  };
+
+  const handleBookingClick = (booking: Booking) => {
+    if (!booking.studioId) {
+      alert('该预约待分配');
+      return;
+    }
+    setClickedBookingId(booking.id);
+    setTimeout(() => setClickedBookingId(null), 200);
+    setSelectedBooking(booking);
+    setIsBookingModalOpen(true);
   };
 
   return (
@@ -395,10 +423,12 @@ export function Studios() {
                             {getBookingsForStudioAndDay(studio.id, day).map(
                               (booking) => {
                                 const position = getBookingPosition(booking, day);
+                                const isClicked = clickedBookingId === booking.id;
                                 return (
                                   <div
                                     key={booking.id}
-                                    className="absolute left-1 right-1 rounded px-2 py-1 overflow-hidden cursor-pointer hover:opacity-80 transition-opacity"
+                                    onClick={() => handleBookingClick(booking)}
+                                    className={`absolute left-1 right-1 rounded px-2 py-1 overflow-hidden cursor-pointer hover:brightness-110 hover:shadow-lg hover:shadow-gold/20 transition-all duration-200 ${isClicked ? 'scale-95 brightness-125' : ''}`}
                                     style={{
                                       ...position,
                                       backgroundColor: getBookingStatusColor(booking.status),
@@ -554,6 +584,146 @@ export function Studios() {
             </button>
           </div>
         </form>
+      </Modal>
+
+      <Modal
+        isOpen={isBookingModalOpen}
+        onClose={() => setIsBookingModalOpen(false)}
+        title="预约详情"
+        size="lg"
+      >
+        {selectedBooking && (
+          <div className="space-y-6">
+            <div className="grid grid-cols-2 gap-6">
+              <div>
+                <label className="block text-sm text-text-muted mb-2">艺人名称</label>
+                <p className="text-text-primary font-medium">
+                  {getArtistById(selectedBooking.artistId)?.name || '未知艺人'}
+                </p>
+              </div>
+              <div>
+                <label className="block text-sm text-text-muted mb-2">录音棚</label>
+                <p className="text-text-primary font-medium">
+                  {selectedBooking.studioId
+                    ? getStudioById(selectedBooking.studioId)?.name || '未知录音棚'
+                    : '待分配'}
+                </p>
+              </div>
+              <div>
+                <label className="block text-sm text-text-muted mb-2">预约时间段</label>
+                <p className="text-text-primary font-medium">
+                  {format(selectedBooking.startTime, 'yyyy-MM-dd HH:mm')} -{' '}
+                  {format(selectedBooking.endTime, 'HH:mm')}
+                </p>
+              </div>
+              <div>
+                <label className="block text-sm text-text-muted mb-2">时长</label>
+                <p className="text-text-primary font-medium">
+                  {formatDuration(selectedBooking.duration)}
+                </p>
+              </div>
+              <div>
+                <label className="block text-sm text-text-muted mb-2">订单金额</label>
+                <p className="text-gold font-semibold text-lg">
+                  {formatCurrency(selectedBooking.totalAmount)}
+                </p>
+              </div>
+              <div>
+                <label className="block text-sm text-text-muted mb-2">预约状态</label>
+                <StatusBadge status={selectedBooking.status} />
+              </div>
+            </div>
+
+            {selectedBooking.allocationReason && (
+              <div>
+                <label className="block text-sm text-text-muted mb-2">分配理由</label>
+                <span className="inline-flex items-center px-3 py-1.5 rounded-full text-sm font-medium bg-gold/20 text-gold border border-gold/30">
+                  {selectedBooking.allocationReason}
+                </span>
+              </div>
+            )}
+
+            {selectedBooking.allocationScore !== undefined && (
+              <div>
+                <label className="block text-sm text-text-muted mb-2">
+                  分配评分 ({((selectedBooking.allocationScore || 0) * 100).toFixed(0)}%)
+                </label>
+                <div className="progress-bar">
+                  <div
+                    className="progress-bar-fill"
+                    style={{
+                      width: `${(selectedBooking.allocationScore || 0) * 100}%`,
+                    }}
+                  />
+                </div>
+              </div>
+            )}
+
+            <div className="pt-4 border-t border-gold/10">
+              <label className="block text-sm text-text-muted mb-3">母带状态</label>
+              {(() => {
+                const masters = getMastersByBookingId(selectedBooking.id);
+                const hasMaster = masters.length > 0;
+                const hasConfirmed = masters.some((m) => m.isConfirmed);
+                return (
+                  <div className="flex items-center gap-4">
+                    <div
+                      className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-sm font-medium border ${
+                        hasMaster
+                          ? 'bg-neon-green/20 text-neon-green border-neon-green/30'
+                          : 'bg-text-muted/20 text-text-muted border-text-muted/30'
+                      }`}
+                    >
+                      <span
+                        className={`w-2 h-2 rounded-full ${
+                          hasMaster ? 'bg-neon-green' : 'bg-text-muted'
+                        }`}
+                      />
+                      {hasMaster ? '已交付' : '未交付'}
+                    </div>
+                    <div
+                      className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-sm font-medium border ${
+                        hasConfirmed
+                          ? 'bg-gold/20 text-gold border-gold/30'
+                          : 'bg-text-muted/20 text-text-muted border-text-muted/30'
+                      }`}
+                    >
+                      <span
+                        className={`w-2 h-2 rounded-full ${
+                          hasConfirmed ? 'bg-gold' : 'bg-text-muted'
+                        }`}
+                      />
+                      {hasConfirmed ? '已确认' : '未确认'}
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
+
+            <div className="flex justify-end gap-4 pt-4 border-t border-gold/10">
+              <button
+                onClick={() => {
+                  setIsBookingModalOpen(false);
+                  navigate('/settlement');
+                }}
+                className="flex items-center gap-2 btn-outline"
+              >
+                <FileText className="w-4 h-4" />
+                查看对账记录
+              </button>
+              <button
+                onClick={() => {
+                  setIsBookingModalOpen(false);
+                  navigate('/masters');
+                }}
+                className="flex items-center gap-2 btn-gold"
+              >
+                <Disc className="w-4 h-4" />
+                查看母带记录
+              </button>
+            </div>
+          </div>
+        )}
       </Modal>
     </div>
   );

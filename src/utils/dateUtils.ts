@@ -51,12 +51,11 @@ export function isOverlapping(
   start2: Date,
   end2: Date
 ): boolean {
-  return (
-    isWithinInterval(start1, { start: start2, end: end2 }) ||
-    isWithinInterval(end1, { start: start2, end: end2 }) ||
-    isWithinInterval(start2, { start: start1, end: end1 }) ||
-    (start1 < start2 && end1 > end2)
-  );
+  const t1 = start1.getTime();
+  const t2 = end1.getTime();
+  const t3 = start2.getTime();
+  const t4 = end2.getTime();
+  return t1 < t4 && t3 < t2;
 }
 
 export function getHoursInDay(date: Date): Date[] {

@@ -1,0 +1,58 @@
+import { Studio } from '../types';
+
+export const mockStudios: Studio[] = [
+  {
+    id: 'studio-001',
+    name: 'Aurora 一号棚',
+    type: 'LARGE',
+    hourlyRate: 3000,
+    equipment: 'Neve 8078调音台, U47麦克风, 大型录音空间',
+    capacity: 15,
+    isActive: true,
+  },
+  {
+    id: 'studio-002',
+    name: 'Aurora 二号棚',
+    type: 'LARGE',
+    hourlyRate: 2800,
+    equipment: 'SSL 9000K调音台, C800G麦克风, 5.1环绕声',
+    capacity: 12,
+    isActive: true,
+  },
+  {
+    id: 'studio-003',
+    name: 'Harmony 一号棚',
+    type: 'MEDIUM',
+    hourlyRate: 1800,
+    equipment: 'API 1608调音台, U87麦克风, 中型录音空间',
+    capacity: 8,
+    isActive: true,
+  },
+  {
+    id: 'studio-004',
+    name: 'Harmony 二号棚',
+    type: 'MEDIUM',
+    hourlyRate: 1600,
+    equipment: 'Focusrite RedNet, SM7B麦克风, 人声 Booth',
+    capacity: 6,
+    isActive: true,
+  },
+  {
+    id: 'studio-005',
+    name: 'Echo 一号棚',
+    type: 'SMALL',
+    hourlyRate: 800,
+    equipment: 'Universal Audio Apollo, AT4053麦克风',
+    capacity: 3,
+    isActive: true,
+  },
+  {
+    id: 'studio-006',
+    name: 'Echo 二号棚',
+    type: 'SMALL',
+    hourlyRate: 600,
+    equipment: 'Scarlett 18i20, MXL 770麦克风, 编辑室',
+    capacity: 2,
+    isActive: true,
+  },
+];

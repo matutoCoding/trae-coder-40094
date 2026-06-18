@@ -32,6 +32,7 @@ import { Modal } from '@/components/ui/Modal';
 import { StatCard } from '@/components/ui/StatCard';
 import { formatCurrency, formatPercent } from '@/utils/formatters';
 import { MonthlyView } from './MonthlyView';
+import { MonthlyDashboard } from './MonthlyDashboard';
 import { getTierName, tierHistoryData, TierHistoryRecord, TierFormData } from './commissionConstants';
 
 const initialFormData: TierFormData = {
@@ -198,6 +199,10 @@ export function Commission() {
             value={`${formatCurrency(0)} - ${formatCurrency(Math.max(...sortedTiers.map((t) => t.maxAmount)))}`}
             icon={<DollarSign className="w-6 h-6" />}
           />
+        </div>
+
+        <div className="mb-8">
+          <MonthlyDashboard />
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">

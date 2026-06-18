@@ -1,11 +1,19 @@
 import { differenceInMinutes, addMinutes, isSameDay } from 'date-fns';
-import { Studio, Booking, BookingRequest, AllocationCandidate, AllocationResult } from '../types';
+import {
+  Studio,
+  Booking,
+  BookingRequest,
+  AllocationCandidate,
+  AllocationResult,
+  StudioBlockout,
+} from '../types';
 import { isOverlapping, getStudioTypeLabel } from '../utils/dateUtils';
 
 function filterAvailableStudios(
   request: BookingRequest,
   studios: Studio[],
-  existingBookings: Booking[]
+  existingBookings: Booking[],
+  blockouts: StudioBlockout[] = []
 ): Studio[] {
   return studios.filter((studio) => {
     if (!studio.isActive) return false;
@@ -17,11 +25,21 @@ function filterAvailableStudios(
         isSameDay(b.startTime, request.startTime)
     );
 
-    const hasConflict = studioBookings.some((booking) =>
+    const hasBookingConflict = studioBookings.some((booking) =>
       isOverlapping(request.startTime, request.endTime, booking.startTime, booking.endTime)
     );
 
-    return !hasConflict;
+    if (hasBookingConflict) return false;
+
+    const studioBlockouts = blockouts.filter(
+      (b) => b.studioId === studio.id && isSameDay(b.startTime, request.startTime)
+    );
+
+    const hasBlockoutConflict = studioBlockouts.some((blockout) =>
+      isOverlapping(request.startTime, request.endTime, blockout.startTime, blockout.endTime)
+    );
+
+    return !hasBlockoutConflict;
   });
 }
 
@@ -180,15 +198,16 @@ function generateAllocationReason(
 export function allocateStudio(
   request: BookingRequest,
   studios: Studio[],
-  existingBookings: Booking[]
+  existingBookings: Booking[],
+  blockouts: StudioBlockout[] = []
 ): AllocationResult {
-  const availableStudios = filterAvailableStudios(request, studios, existingBookings);
+  const availableStudios = filterAvailableStudios(request, studios, existingBookings, blockouts);
 
   if (availableStudios.length === 0) {
     return {
       success: false,
       alternatives: [],
-      message: '该时段所有录音棚均已被占用，请选择其他时段',
+      message: '该时段所有录音棚均已被占用或处于维护期，请选择其他时段',
     };
   }
 
@@ -211,7 +230,8 @@ export function allocateStudio(
 export function batchAllocate(
   pendingBookings: Booking[],
   studios: Studio[],
-  existingBookings: Booking[]
+  existingBookings: Booking[],
+  blockouts: StudioBlockout[] = []
 ): Map<string, AllocationResult> {
   const results = new Map<string, AllocationResult>();
   const currentBookings = [...existingBookings];
@@ -231,7 +251,7 @@ export function batchAllocate(
       notes: booking.notes,
     };
 
-    const result = allocateStudio(request, studios, currentBookings);
+    const result = allocateStudio(request, studios, currentBookings, blockouts);
     results.set(booking.id, result);
 
     if (result.success && result.bestMatch) {

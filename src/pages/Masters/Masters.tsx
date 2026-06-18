@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect, useRef } from 'react';
 import {
   Plus,
   Download,
@@ -12,6 +12,7 @@ import {
   User,
   Music,
   AlertTriangle,
+  X,
 } from 'lucide-react';
 import { useAppStore } from '@/store/useAppStore';
 import { Modal } from '@/components/ui/Modal';
@@ -28,6 +29,9 @@ export function Masters() {
     confirmMasterDelivery,
     getMastersByBookingId,
     getArtistById,
+    getBookingById,
+    highlight,
+    clearHighlight,
   } = useAppStore();
 
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -39,6 +43,10 @@ export function Masters() {
     downloadUrl: '',
     notes: '',
   });
+  const [highlightedMasterIds, setHighlightedMasterIds] = useState<Set<string>>(new Set());
+  const [showBanner, setShowBanner] = useState(false);
+  const [bannerBookingId, setBannerBookingId] = useState<string>('');
+  const highlightClearTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   const unconfirmedMasters = useMemo(
     () => masters.filter((m) => !m.isConfirmed),
@@ -116,6 +124,34 @@ export function Masters() {
   const hasUnconfirmedInBooking = (bookingId: string): boolean => {
     return getMastersByBookingId(bookingId).some((m) => !m.isConfirmed);
   };
+
+  useEffect(() => {
+    if (!highlight?.bookingId) return;
+    const bookingId = highlight.bookingId;
+    const booking = getBookingById(bookingId);
+    if (booking) {
+      setSelectedArtistId(booking.artistId);
+      setIsFilterOpen(true);
+    }
+    const bookingMasters = getMastersByBookingId(bookingId);
+    if (bookingMasters.length > 0) {
+      setHighlightedMasterIds(new Set(bookingMasters.map((m) => m.id)));
+    }
+    setBannerBookingId(bookingId);
+    setShowBanner(true);
+    if (highlightClearTimerRef.current) {
+      clearTimeout(highlightClearTimerRef.current);
+    }
+    highlightClearTimerRef.current = setTimeout(() => {
+      setHighlightedMasterIds(new Set());
+      clearHighlight();
+    }, 3000);
+    return () => {
+      if (highlightClearTimerRef.current) {
+        clearTimeout(highlightClearTimerRef.current);
+      }
+    };
+  }, [highlight?.bookingId, highlight?.timestamp, getBookingById, getMastersByBookingId, clearHighlight]);
 
   return (
     <div className="space-y-6">
@@ -212,6 +248,23 @@ export function Masters() {
         </div>
       )}
 
+      {showBanner && (
+        <div className="flex items-center justify-between p-4 rounded-xl bg-gradient-to-r from-gold/20 via-gold/10 to-gold/20 border border-gold/30 animate-slide-up">
+          <div className="flex items-center gap-3">
+            <Music className="w-5 h-5 text-gold flex-shrink-0" />
+            <p className="text-gold font-medium">
+              正在查看订单 #{bannerBookingId.slice(-3)} 的母带记录
+            </p>
+          </div>
+          <button
+            onClick={() => setShowBanner(false)}
+            className="p-1.5 rounded-lg hover:bg-gold/20 transition-colors"
+          >
+            <X className="w-4 h-4 text-gold" />
+          </button>
+        </div>
+      )}
+
       <div className="space-y-6">
         {bookingsWithMasters.length === 0 ? (
           <div className="card text-center py-12">
@@ -295,6 +348,10 @@ export function Masters() {
                             master.isConfirmed
                               ? 'border-neon-green/30 bg-neon-green/5'
                               : 'border-neon-yellow/30 bg-neon-yellow/5'
+                          } ${
+                            highlightedMasterIds.has(master.id)
+                              ? 'bg-gold/10 border-l-4 border-l-gold border-gold animate-pulse-gold'
+                              : ''
                           }`}
                         >
                           <div className="flex items-start justify-between">

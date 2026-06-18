@@ -1,5 +1,6 @@
-import { useState, Fragment, useMemo } from 'react';
+import { useState, Fragment, useMemo, useEffect, useRef } from 'react';
 import type { MouseEvent, ReactNode, ChangeEvent } from 'react';
+import { X } from 'lucide-react';
 import {
   Download,
   CheckCircle,
@@ -32,6 +33,9 @@ export function Settlement() {
     getBookingById,
     getArtistById,
     getStudioById,
+    getSettlementByBookingId,
+    highlight,
+    clearHighlight,
   } = useAppStore();
 
   const currentDate = new Date();
@@ -44,6 +48,10 @@ export function Settlement() {
   const [selectedStatus, setSelectedStatus] = useState<SettlementStatus | 'all'>('all');
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [isBatchModalOpen, setIsBatchModalOpen] = useState(false);
+  const [highlightedSettlementIds, setHighlightedSettlementIds] = useState<Set<string>>(new Set());
+  const [showNoSettlementBanner, setShowNoSettlementBanner] = useState(false);
+  const [noSettlementBookingId, setNoSettlementBookingId] = useState<string>('');
+  const highlightClearTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   const monthOptions = useMemo(() => {
     const options: { value: string; label: string }[] = [];
@@ -148,6 +156,73 @@ export function Settlement() {
       totalArtistEarnings,
     };
   }, [selectedSettlements]);
+
+  const modalSummary = useMemo(() => {
+    const ids = Array.from(selectedIds);
+    const targetSettlements = settlements.filter((s) => ids.includes(s.id));
+    const totalAmount = targetSettlements.reduce((sum, s) => sum + s.totalAmount, 0);
+    const totalCommissionAmount = targetSettlements.reduce(
+      (sum, s) => sum + s.commissionAmount,
+      0
+    );
+    const totalArtistEarnings = targetSettlements.reduce(
+      (sum, s) => sum + s.artistAmount,
+      0
+    );
+    return {
+      count: targetSettlements.length,
+      totalAmount,
+      totalCommissionAmount,
+      totalArtistEarnings,
+    };
+  }, [selectedIds, settlements]);
+
+  useEffect(() => {
+    if (!highlight?.bookingId) return;
+    const bookingId = highlight.bookingId;
+    const booking = getBookingById(bookingId);
+    if (booking) {
+      const artist = getArtistById(booking.artistId);
+      if (artist) {
+        setSelectedArtistId(artist.id);
+      }
+    }
+    setSelectedStatus('all');
+    const settlement = getSettlementByBookingId(bookingId);
+    if (settlement) {
+      setHighlightedSettlementIds(new Set([settlement.id]));
+      setShowNoSettlementBanner(false);
+    } else {
+      setNoSettlementBookingId(bookingId);
+      setShowNoSettlementBanner(true);
+      setHighlightedSettlementIds(new Set());
+    }
+    if (highlightClearTimerRef.current) {
+      clearTimeout(highlightClearTimerRef.current);
+    }
+    highlightClearTimerRef.current = setTimeout(() => {
+      setHighlightedSettlementIds(new Set());
+      clearHighlight();
+    }, 3000);
+    return () => {
+      if (highlightClearTimerRef.current) {
+        clearTimeout(highlightClearTimerRef.current);
+      }
+    };
+  }, [highlight?.bookingId, highlight?.timestamp, getBookingById, getArtistById, getSettlementByBookingId, clearHighlight]);
+
+  useEffect(() => {
+    setSelectedIds((prevSelected) => {
+      const filteredIds = new Set<string>();
+      const filteredSettlementIds = new Set(filteredSettlements.map((s) => s.id));
+      prevSelected.forEach((id) => {
+        if (filteredSettlementIds.has(id)) {
+          filteredIds.add(id);
+        }
+      });
+      return filteredIds;
+    });
+  }, [selectedMonth, selectedArtistId, selectedStatus]);
 
   const handleResetFilters = () => {
     setSelectedMonth(defaultMonth);
@@ -614,6 +689,23 @@ export function Settlement() {
         />
       </div>
 
+      {showNoSettlementBanner && (
+        <div className="flex items-center justify-between p-4 rounded-xl bg-gradient-to-r from-gold/20 via-gold/10 to-gold/20 border border-gold/30 animate-slide-up">
+          <div className="flex items-center gap-3">
+            <AlertTriangle className="w-5 h-5 text-gold flex-shrink-0" />
+            <p className="text-gold font-medium">
+              订单 #{noSettlementBookingId.slice(-3)} 暂未生成对账单
+            </p>
+          </div>
+          <button
+            onClick={() => setShowNoSettlementBanner(false)}
+            className="p-1.5 rounded-lg hover:bg-gold/20 transition-colors"
+          >
+            <X className="w-4 h-4 text-gold" />
+          </button>
+        </div>
+      )}
+
       <div className="card">
         {selectedIds.size > 0 && (
           <div className="sticky top-0 z-10 mb-4 -mx-6 -mt-6 px-6 py-4 bg-gradient-to-r from-gold/20 via-gold/10 to-gold/20 border-b border-gold/20 rounded-t-xl flex items-center justify-between">
@@ -674,8 +766,12 @@ export function Settlement() {
                   <Fragment key={row.id}>
                     <tr
                       onClick={() => toggleRow(row.id)}
-                      className={`border-b border-gold/5 transition-colors cursor-pointer hover:bg-gold/5 ${
+                      className={`border-b border-gold/5 transition-all duration-300 cursor-pointer hover:bg-gold/5 ${
                         index % 2 === 0 ? 'bg-bg-secondary/30' : ''
+                      } ${
+                        highlightedSettlementIds.has(row.id)
+                          ? 'bg-gold/10 border-l-4 border-gold animate-pulse-gold'
+                          : ''
                       }`}
                     >
                       {columns.map((col) => (
@@ -723,7 +819,7 @@ export function Settlement() {
             <div className="bg-bg-tertiary/50 rounded-xl p-4 border border-gold/10">
               <div className="text-sm text-text-muted mb-1">选中记录数</div>
               <div className="font-display text-2xl font-bold text-gold">
-                {selectedSummary.count} 条
+                {modalSummary.count} 条
               </div>
             </div>
 
@@ -731,19 +827,19 @@ export function Settlement() {
               <div className="bg-bg-tertiary/50 rounded-xl p-4 border border-gold/10">
                 <div className="text-sm text-text-muted mb-1">涉及总金额</div>
                 <div className="font-display text-xl font-bold text-text-primary">
-                  {formatCurrency(selectedSummary.totalAmount)}
+                  {formatCurrency(modalSummary.totalAmount)}
                 </div>
               </div>
               <div className="bg-bg-tertiary/50 rounded-xl p-4 border border-gold/10">
                 <div className="text-sm text-text-muted mb-1">总抽成金额</div>
                 <div className="font-display text-xl font-bold text-neon-red">
-                  {formatCurrency(selectedSummary.totalCommissionAmount)}
+                  {formatCurrency(modalSummary.totalCommissionAmount)}
                 </div>
               </div>
               <div className="bg-bg-tertiary/50 rounded-xl p-4 border border-gold/10">
                 <div className="text-sm text-text-muted mb-1">艺人总所得</div>
                 <div className="font-display text-xl font-bold text-neon-green">
-                  {formatCurrency(selectedSummary.totalArtistEarnings)}
+                  {formatCurrency(modalSummary.totalArtistEarnings)}
                 </div>
               </div>
             </div>

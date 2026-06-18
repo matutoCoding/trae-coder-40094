@@ -14,6 +14,13 @@ import {
   GripVertical,
   FileText,
   Disc,
+  Wrench,
+  AlertTriangle,
+  CheckCircle2,
+  XCircle,
+  Save,
+  Clock,
+  Ban,
 } from 'lucide-react';
 import {
   format,
@@ -26,8 +33,8 @@ import {
   setMinutes,
 } from 'date-fns';
 import { zhCN } from 'date-fns/locale';
-import { useAppStore } from '@/store/useAppStore';
-import { Studio, StudioType, Booking } from '@/types';
+import { useAppStore, RescheduleResult } from '@/store/useAppStore';
+import { Studio, StudioType, Booking, StudioBlockout, BlockoutType } from '@/types';
 import { Modal } from '@/components/ui/Modal';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { formatCurrency, formatDuration } from '@/utils/formatters';
@@ -45,6 +52,15 @@ interface StudioFormData {
   isActive: boolean;
 }
 
+interface BlockoutFormData {
+  date: string;
+  startTime: string;
+  endTime: string;
+  type: BlockoutType;
+  reason: string;
+  isAllDay: boolean;
+}
+
 const initialFormData: StudioFormData = {
   name: '',
   type: 'MEDIUM',
@@ -54,6 +70,15 @@ const initialFormData: StudioFormData = {
   isActive: true,
 };
 
+const initialBlockoutFormData: BlockoutFormData = {
+  date: format(new Date(), 'yyyy-MM-dd'),
+  startTime: '09:00',
+  endTime: '12:00',
+  type: 'MAINTENANCE',
+  reason: '',
+  isAllDay: false,
+};
+
 const TIME_SLOTS = Array.from({ length: 14 }, (_, i) => i + 9);
 
 export function Studios() {
@@ -61,12 +86,20 @@ export function Studios() {
   const {
     studios,
     bookings,
+    blockouts,
     addStudio,
     updateStudio,
     deleteStudio,
     getArtistById,
     getStudioById,
     getMastersByBookingId,
+    rescheduleBooking,
+    addBlockout,
+    deleteBlockout,
+    getBlockoutsByStudioAndDate,
+    getBlockoutTypeLabel,
+    getBlockoutTypeColor,
+    setHighlight,
   } = useAppStore();
   const [viewMode, setViewMode] = useState<ViewMode>('list');
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -78,6 +111,14 @@ export function Studios() {
   const [isBookingModalOpen, setIsBookingModalOpen] = useState(false);
   const [selectedBooking, setSelectedBooking] = useState<Booking | null>(null);
   const [clickedBookingId, setClickedBookingId] = useState<string | null>(null);
+  const [isBlockoutModalOpen, setIsBlockoutModalOpen] = useState(false);
+  const [selectedStudioForBlockout, setSelectedStudioForBlockout] = useState<Studio | null>(null);
+  const [blockoutFormData, setBlockoutFormData] = useState<BlockoutFormData>(initialBlockoutFormData);
+  const [rescheduleDate, setRescheduleDate] = useState('');
+  const [rescheduleStartTime, setRescheduleStartTime] = useState('');
+  const [rescheduleDuration, setRescheduleDuration] = useState(1);
+  const [rescheduleResult, setRescheduleResult] = useState<RescheduleResult | null>(null);
+  const [rescheduleSuccess, setRescheduleSuccess] = useState(false);
 
   const usageStats = useMemo(() => {
     return getAllStudiosUsageStats(studios, bookings);
@@ -94,6 +135,20 @@ export function Studios() {
       return isWithinInterval(b.startTime, { start: weekStart, end: weekEnd });
     });
   }, [bookings, weekStart]);
+
+  const studioBlockouts = useMemo(() => {
+    const weekEnd = addDays(weekStart, 6);
+    return blockouts.filter((b) => {
+      return isWithinInterval(b.startTime, { start: weekStart, end: weekEnd });
+    });
+  }, [blockouts, weekStart]);
+
+  const sortedStudioBlockouts = useMemo(() => {
+    if (!selectedStudioForBlockout) return [];
+    return blockouts
+      .filter((b) => b.studioId === selectedStudioForBlockout.id)
+      .sort((a, b) => a.startTime.getTime() - b.startTime.getTime());
+  }, [blockouts, selectedStudioForBlockout]);
 
   const getUtilizationRate = (studioId: string) => {
     const stat = usageStats.find((s) => s.studioId === studioId);
@@ -123,6 +178,122 @@ export function Studios() {
     if (window.confirm('确定要删除这个录音棚吗？')) {
       deleteStudio(id);
     }
+  };
+
+  const handleOpenBlockoutModal = (studio: Studio) => {
+    setSelectedStudioForBlockout(studio);
+    setBlockoutFormData({
+      ...initialBlockoutFormData,
+      date: format(new Date(), 'yyyy-MM-dd'),
+    });
+    setIsBlockoutModalOpen(true);
+  };
+
+  const handleAddBlockout = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedStudioForBlockout) return;
+
+    const [year, month, day] = blockoutFormData.date.split('-').map(Number);
+    let startTime: Date;
+    let endTime: Date;
+
+    if (blockoutFormData.isAllDay) {
+      startTime = new Date(year, month - 1, day, 0, 0, 0);
+      endTime = new Date(year, month - 1, day, 23, 59, 59);
+    } else {
+      const [startH, startM] = blockoutFormData.startTime.split(':').map(Number);
+      const [endH, endM] = blockoutFormData.endTime.split(':').map(Number);
+      startTime = new Date(year, month - 1, day, startH, startM, 0);
+      endTime = new Date(year, month - 1, day, endH, endM, 0);
+    }
+
+    if (!blockoutFormData.isAllDay && endTime <= startTime) {
+      alert('结束时间必须晚于开始时间');
+      return;
+    }
+
+    addBlockout({
+      studioId: selectedStudioForBlockout.id,
+      startTime,
+      endTime,
+      type: blockoutFormData.type,
+      reason: blockoutFormData.reason || getBlockoutTypeLabel(blockoutFormData.type),
+      isAllDay: blockoutFormData.isAllDay,
+    });
+
+    setBlockoutFormData({
+      ...initialBlockoutFormData,
+      date: format(new Date(), 'yyyy-MM-dd'),
+    });
+  };
+
+  const handleDeleteBlockout = (id: string) => {
+    if (window.confirm('确定要删除这个停用时段吗？')) {
+      deleteBlockout(id);
+    }
+  };
+
+  const handleBookingClick = (booking: Booking) => {
+    if (!booking.studioId) {
+      alert('该预约待分配');
+      return;
+    }
+    setClickedBookingId(booking.id);
+    setTimeout(() => setClickedBookingId(null), 200);
+    setSelectedBooking(booking);
+    setRescheduleDate(format(booking.startTime, 'yyyy-MM-dd'));
+    setRescheduleStartTime(format(booking.startTime, 'HH:mm'));
+    setRescheduleDuration(Math.max(1, Math.round(booking.duration / 60)));
+    setRescheduleResult(null);
+    setRescheduleSuccess(false);
+    setIsBookingModalOpen(true);
+  };
+
+  const handleReschedule = () => {
+    if (!selectedBooking || !selectedBooking.studioId) return;
+
+    const [year, month, day] = rescheduleDate.split('-').map(Number);
+    const [startH, startM] = rescheduleStartTime.split(':').map(Number);
+    const startTime = new Date(year, month - 1, day, startH, startM, 0);
+    const endTime = new Date(startTime.getTime() + rescheduleDuration * 60 * 60 * 1000);
+
+    const result = rescheduleBooking(selectedBooking.id, startTime, endTime);
+    setRescheduleResult(result);
+
+    if (result.success) {
+      setRescheduleSuccess(true);
+      const updatedBooking = { ...selectedBooking, startTime, endTime, duration: rescheduleDuration * 60 };
+      setSelectedBooking(updatedBooking);
+      setTimeout(() => {
+        setIsBookingModalOpen(false);
+        setRescheduleSuccess(false);
+        setRescheduleResult(null);
+      }, 1500);
+    }
+  };
+
+  const getBlockoutPosition = (blockout: StudioBlockout, day: Date) => {
+    const dayStart = setMinutes(setHours(day, 9), 0);
+    const dayEnd = setMinutes(setHours(day, 22), 0);
+    const effectiveStart = blockout.isAllDay ? dayStart : blockout.startTime;
+    const effectiveEnd = blockout.isAllDay ? dayEnd : blockout.endTime;
+    const startMinutes = differenceInMinutes(effectiveStart, dayStart);
+    const endMinutes = differenceInMinutes(effectiveEnd, dayStart);
+    const totalMinutes = differenceInMinutes(dayEnd, dayStart);
+
+    const top = Math.max(0, (startMinutes / totalMinutes) * 100);
+    const height = Math.min(
+      100 - top,
+      ((endMinutes - startMinutes) / totalMinutes) * 100
+    );
+
+    return { top: `${top}%`, height: `${height}%` };
+  };
+
+  const getBlockoutsForStudioAndDay = (studioId: string, day: Date) => {
+    return studioBlockouts.filter(
+      (b) => b.studioId === studioId && isSameDay(b.startTime, day)
+    );
   };
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -155,17 +326,6 @@ export function Studios() {
     return studioBookings.filter(
       (b) => b.studioId === studioId && isSameDay(b.startTime, day)
     );
-  };
-
-  const handleBookingClick = (booking: Booking) => {
-    if (!booking.studioId) {
-      alert('该预约待分配');
-      return;
-    }
-    setClickedBookingId(booking.id);
-    setTimeout(() => setClickedBookingId(null), 200);
-    setSelectedBooking(booking);
-    setIsBookingModalOpen(true);
   };
 
   return (
@@ -300,6 +460,15 @@ export function Studios() {
                         />
                       </div>
                     </div>
+                    <div className="mt-4 pt-4 border-t border-gold/10">
+                      <button
+                        onClick={() => handleOpenBlockoutModal(studio)}
+                        className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-bg-tertiary/50 text-text-secondary rounded-lg hover:bg-error/10 hover:text-error border border-gold/10 hover:border-error/30 transition-all duration-200"
+                      >
+                        <Wrench className="w-4 h-4" />
+                        维护管理
+                      </button>
+                    </div>
                   </div>
                 </div>
               );
@@ -334,7 +503,7 @@ export function Studios() {
               </div>
             </div>
 
-            <div className="flex items-center gap-4 mb-4 px-4">
+            <div className="flex flex-wrap items-center gap-4 mb-4 px-4">
               {(['PENDING', 'ALLOCATED', 'CONFIRMED', 'COMPLETED'] as const).map(
                 (status) => (
                   <div key={status} className="flex items-center gap-2">
@@ -350,6 +519,23 @@ export function Studios() {
                         : status === 'CONFIRMED'
                         ? '已确认'
                         : '已完成'}
+                    </span>
+                  </div>
+                )
+              )}
+              <div className="h-4 w-px bg-gold/20 mx-2" />
+              {(['MAINTENANCE', 'HOLIDAY', 'PRIVATE'] as const).map(
+                (type) => (
+                  <div key={type} className="flex items-center gap-2">
+                    <div
+                      className="w-4 h-3 rounded"
+                      style={{
+                        backgroundColor: getBlockoutTypeColor(type),
+                        backgroundImage: `repeating-linear-gradient(45deg, transparent, transparent 2px, rgba(255,255,255,0.15) 2px, rgba(255,255,255,0.15) 4px)`,
+                      }}
+                    />
+                    <span className="text-xs text-text-muted">
+                      {getBlockoutTypeLabel(type)}
                     </span>
                   </div>
                 )
@@ -433,12 +619,41 @@ export function Studios() {
                                       ...position,
                                       backgroundColor: getBookingStatusColor(booking.status),
                                       minHeight: '24px',
+                                      zIndex: 10,
                                     }}
                                     title={`${format(booking.startTime, 'HH:mm')} - ${format(booking.endTime, 'HH:mm')}`}
                                   >
                                     <div className="text-xs font-medium text-white truncate">
                                       {format(booking.startTime, 'HH:mm')}-
                                       {format(booking.endTime, 'HH:mm')}
+                                    </div>
+                                  </div>
+                                );
+                              }
+                            )}
+                            {getBlockoutsForStudioAndDay(studio.id, day).map(
+                              (blockout) => {
+                                const position = getBlockoutPosition(blockout, day);
+                                const color = getBlockoutTypeColor(blockout.type);
+                                return (
+                                  <div
+                                    key={blockout.id}
+                                    className="absolute left-1 right-1 rounded px-2 py-1 overflow-hidden not-allowed"
+                                    style={{
+                                      ...position,
+                                      backgroundColor: color,
+                                      backgroundImage: `repeating-linear-gradient(45deg, transparent, transparent 3px, rgba(0,0,0,0.15) 3px, rgba(0,0,0,0.15) 6px)`,
+                                      minHeight: '24px',
+                                      zIndex: 5,
+                                      opacity: 0.9,
+                                      cursor: 'not-allowed',
+                                    }}
+                                    title={`${getBlockoutTypeLabel(blockout.type)} | ${blockout.reason} | ${blockout.isAllDay ? format(blockout.startTime, 'yyyy-MM-dd 全天') : `${format(blockout.startTime, 'HH:mm')} - ${format(blockout.endTime, 'HH:mm')}`}`}
+                                  >
+                                    <div className="text-xs font-semibold text-white/95 truncate drop-shadow-sm">
+                                      {blockout.isAllDay
+                                        ? getBlockoutTypeLabel(blockout.type)
+                                        : `${format(blockout.startTime, 'HH:mm')}-${format(blockout.endTime, 'HH:mm')} ${getBlockoutTypeLabel(blockout.type)}`}
                                     </div>
                                   </div>
                                 );
@@ -700,6 +915,103 @@ export function Studios() {
               })()}
             </div>
 
+            {selectedBooking.studioId && selectedBooking.status !== 'CANCELLED' && selectedBooking.status !== 'COMPLETED' && (
+              <div className="pt-4 border-t border-gold/10">
+                <div className="flex items-center gap-2 mb-4">
+                  <Clock className="w-5 h-5 text-gold" />
+                  <h3 className="text-lg font-semibold text-text-primary">调整时间</h3>
+                </div>
+
+                {rescheduleSuccess && (
+                  <div className="mb-4 p-4 rounded-lg bg-success/10 border border-success/30 flex items-start gap-3">
+                    <CheckCircle2 className="w-5 h-5 text-success flex-shrink-0 mt-0.5" />
+                    <div>
+                      <p className="font-semibold text-success">调整成功！</p>
+                      <p className="text-sm text-success/80">{rescheduleResult?.message || '时间已更新，金额已重新计算'}</p>
+                    </div>
+                  </div>
+                )}
+
+                {rescheduleResult && !rescheduleResult.success && (
+                  <div className="mb-4 p-4 rounded-lg bg-error/10 border-2 border-error/50 flex items-start gap-3 animate-pulse">
+                    <AlertTriangle className="w-6 h-6 text-error flex-shrink-0 mt-0.5" />
+                    <div className="flex-1">
+                      <p className="font-bold text-error text-base mb-1">
+                        ⚠️ {rescheduleResult.conflictType === 'BOOKING' ? '预约冲突' : rescheduleResult.conflictType === 'BLOCKOUT' ? '维护/停用冲突' : '无法修改'}
+                      </p>
+                      <p className="text-sm text-text-secondary mb-2">{rescheduleResult.message}</p>
+                      {rescheduleResult.conflictInfo && (
+                        <div className="p-3 rounded-md bg-bg-secondary border border-error/20">
+                          <div className="flex items-center gap-2 text-sm mb-1">
+                            <span className="text-text-muted">冲突方：</span>
+                            <span className="font-semibold text-error">{rescheduleResult.conflictInfo.name}</span>
+                          </div>
+                          <div className="flex items-center gap-2 text-sm">
+                            <span className="text-text-muted">时间段：</span>
+                            <span className="font-medium text-text-primary">{rescheduleResult.conflictInfo.time}</span>
+                          </div>
+                        </div>
+                      )}
+                      <p className="text-sm font-semibold text-error mt-2">
+                        ❌ 无法修改，请选择其他时间
+                      </p>
+                    </div>
+                  </div>
+                )}
+
+                <div className="grid grid-cols-3 gap-4 mb-4">
+                  <div>
+                    <label className="block text-sm text-text-muted mb-2">日期</label>
+                    <input
+                      type="date"
+                      value={rescheduleDate}
+                      onChange={(e) => {
+                        setRescheduleDate(e.target.value);
+                        setRescheduleResult(null);
+                      }}
+                      className="input-field"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm text-text-muted mb-2">开始时间</label>
+                    <input
+                      type="time"
+                      value={rescheduleStartTime}
+                      onChange={(e) => {
+                        setRescheduleStartTime(e.target.value);
+                        setRescheduleResult(null);
+                      }}
+                      className="input-field"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm text-text-muted mb-2">时长（小时）</label>
+                    <select
+                      value={rescheduleDuration}
+                      onChange={(e) => {
+                        setRescheduleDuration(Number(e.target.value));
+                        setRescheduleResult(null);
+                      }}
+                      className="input-field"
+                    >
+                      {[1, 2, 3, 4, 5, 6, 7, 8].map((h) => (
+                        <option key={h} value={h}>{h} 小时</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                <button
+                  onClick={handleReschedule}
+                  disabled={rescheduleSuccess}
+                  className="flex items-center gap-2 px-5 py-2.5 bg-gold text-bg-primary rounded-lg font-semibold hover:bg-gold/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <Save className="w-4 h-4" />
+                  保存调整
+                </button>
+              </div>
+            )}
+
             <div className="flex justify-end gap-4 pt-4 border-t border-gold/10">
               <button
                 onClick={() => {
@@ -720,6 +1032,181 @@ export function Studios() {
               >
                 <Disc className="w-4 h-4" />
                 查看母带记录
+              </button>
+            </div>
+          </div>
+        )}
+      </Modal>
+
+      <Modal
+        isOpen={isBlockoutModalOpen}
+        onClose={() => setIsBlockoutModalOpen(false)}
+        title={selectedStudioForBlockout ? `停用时段管理 - ${selectedStudioForBlockout.name}` : '停用时段管理'}
+        size="xl"
+      >
+        {selectedStudioForBlockout && (
+          <div className="space-y-6">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              <div>
+                <div className="flex items-center gap-2 mb-4">
+                  <Plus className="w-5 h-5 text-gold" />
+                  <h3 className="text-lg font-semibold text-text-primary">新增停用时段</h3>
+                </div>
+                <form onSubmit={handleAddBlockout} className="space-y-4 bg-bg-secondary/50 rounded-xl p-5 border border-gold/10">
+                  <div>
+                    <label className="block text-sm font-medium text-text-primary mb-2">日期</label>
+                    <input
+                      type="date"
+                      value={blockoutFormData.date}
+                      onChange={(e) => setBlockoutFormData({ ...blockoutFormData, date: e.target.value })}
+                      className="input-field"
+                      required
+                    />
+                  </div>
+
+                  <div className="flex items-center gap-3">
+                    <input
+                      type="checkbox"
+                      id="blockoutAllDay"
+                      checked={blockoutFormData.isAllDay}
+                      onChange={(e) => setBlockoutFormData({ ...blockoutFormData, isAllDay: e.target.checked })}
+                      className="w-4 h-4 text-gold bg-bg-tertiary border-gold/20 rounded focus:ring-gold"
+                    />
+                    <label htmlFor="blockoutAllDay" className="text-sm text-text-primary cursor-pointer">
+                      全天停用
+                    </label>
+                  </div>
+
+                  {!blockoutFormData.isAllDay && (
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-sm font-medium text-text-primary mb-2">开始时间</label>
+                        <input
+                          type="time"
+                          value={blockoutFormData.startTime}
+                          onChange={(e) => setBlockoutFormData({ ...blockoutFormData, startTime: e.target.value })}
+                          className="input-field"
+                          required
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-text-primary mb-2">结束时间</label>
+                        <input
+                          type="time"
+                          value={blockoutFormData.endTime}
+                          onChange={(e) => setBlockoutFormData({ ...blockoutFormData, endTime: e.target.value })}
+                          className="input-field"
+                          required
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  <div>
+                    <label className="block text-sm font-medium text-text-primary mb-2">类型</label>
+                    <select
+                      value={blockoutFormData.type}
+                      onChange={(e) => setBlockoutFormData({ ...blockoutFormData, type: e.target.value as BlockoutType })}
+                      className="input-field"
+                      required
+                    >
+                      <option value="MAINTENANCE">设备维护</option>
+                      <option value="HOLIDAY">节假日</option>
+                      <option value="PRIVATE">私用</option>
+                      <option value="OTHER">其他</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-text-primary mb-2">原因说明</label>
+                    <textarea
+                      value={blockoutFormData.reason}
+                      onChange={(e) => setBlockoutFormData({ ...blockoutFormData, reason: e.target.value })}
+                      className="input-field min-h-[80px]"
+                      placeholder="请输入停用原因（可选）"
+                    />
+                  </div>
+
+                  <button
+                    type="submit"
+                    className="w-full flex items-center justify-center gap-2 px-5 py-2.5 bg-gold text-bg-primary rounded-lg font-semibold hover:bg-gold/90 transition-colors"
+                  >
+                    <Plus className="w-4 h-4" />
+                    添加停用时段
+                  </button>
+                </form>
+              </div>
+
+              <div>
+                <div className="flex items-center gap-2 mb-4">
+                  <Ban className="w-5 h-5 text-error" />
+                  <h3 className="text-lg font-semibold text-text-primary">
+                    现有停用时段 ({sortedStudioBlockouts.length})
+                  </h3>
+                </div>
+                <div className="space-y-3 max-h-[500px] overflow-y-auto pr-2">
+                  {sortedStudioBlockouts.length === 0 ? (
+                    <div className="p-8 rounded-xl bg-bg-secondary/30 border border-gold/10 text-center">
+                      <Calendar className="w-12 h-12 text-text-muted/40 mx-auto mb-3" />
+                      <p className="text-text-muted text-sm">暂无停用时段记录</p>
+                    </div>
+                  ) : (
+                    sortedStudioBlockouts.map((blockout) => {
+                      const color = getBlockoutTypeColor(blockout.type);
+                      return (
+                        <div
+                          key={blockout.id}
+                          className="p-4 rounded-xl bg-bg-secondary/50 border border-gold/10 hover:border-gold/30 transition-colors"
+                        >
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2 mb-2">
+                                <span
+                                  className="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-semibold text-white"
+                                  style={{
+                                    backgroundColor: color,
+                                    backgroundImage: `repeating-linear-gradient(45deg, transparent, transparent 2px, rgba(255,255,255,0.15) 2px, rgba(255,255,255,0.15) 4px)`,
+                                  }}
+                                >
+                                  {getBlockoutTypeLabel(blockout.type)}
+                                </span>
+                                {blockout.isAllDay && (
+                                  <span className="text-xs px-2 py-0.5 rounded-full bg-bg-tertiary text-text-muted">
+                                    全天
+                                  </span>
+                                )}
+                              </div>
+                              <div className="text-sm text-text-primary font-medium mb-1">
+                                {blockout.isAllDay
+                                  ? format(blockout.startTime, 'yyyy年MM月dd日')
+                                  : `${format(blockout.startTime, 'yyyy-MM-dd HH:mm')} - ${format(blockout.endTime, 'HH:mm')}`}
+                              </div>
+                              <div className="text-sm text-text-muted truncate">
+                                {blockout.reason}
+                              </div>
+                            </div>
+                            <button
+                              onClick={() => handleDeleteBlockout(blockout.id)}
+                              className="p-2 rounded-lg text-text-muted hover:text-error hover:bg-error/10 transition-colors flex-shrink-0"
+                              title="删除"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+            </div>
+
+            <div className="flex justify-end pt-4 border-t border-gold/10">
+              <button
+                onClick={() => setIsBlockoutModalOpen(false)}
+                className="px-6 py-2.5 btn-gold"
+              >
+                完成
               </button>
             </div>
           </div>

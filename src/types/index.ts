@@ -2,6 +2,24 @@ export type StudioType = 'LARGE' | 'MEDIUM' | 'SMALL';
 export type BookingStatus = 'PENDING' | 'ALLOCATED' | 'CONFIRMED' | 'COMPLETED' | 'CANCELLED';
 export type SettlementStatus = 'UNSETTLED' | 'SETTLED';
 export type UserRole = 'ADMIN' | 'ARTIST';
+export type BlockoutType = 'MAINTENANCE' | 'HOLIDAY' | 'PRIVATE' | 'OTHER';
+
+export interface StudioBlockout {
+  id: string;
+  studioId: string;
+  startTime: Date;
+  endTime: Date;
+  type: BlockoutType;
+  reason: string;
+  isAllDay: boolean;
+}
+
+export interface HighlightState {
+  bookingId?: string;
+  settlementId?: string;
+  masterId?: string;
+  timestamp: number;
+}
 
 export interface Studio {
   id: string;

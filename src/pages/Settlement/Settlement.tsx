@@ -1,7 +1,8 @@
 import { useState, Fragment, useMemo, useEffect, useRef } from 'react';
 import type { MouseEvent, ReactNode, ChangeEvent } from 'react';
-import { X } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import {
+  X,
   Download,
   CheckCircle,
   Calculator,
@@ -13,6 +14,11 @@ import {
   Wallet,
   RotateCcw,
   AlertTriangle,
+  Calendar,
+  Clock,
+  FileText,
+  Disc,
+  CheckCircle2,
 } from 'lucide-react';
 import { format, subMonths, isSameMonth } from 'date-fns';
 import { zhCN } from 'date-fns/locale';
@@ -20,8 +26,8 @@ import { useAppStore } from '@/store/useAppStore';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { StatCard } from '@/components/ui/StatCard';
 import { Modal } from '@/components/ui/Modal';
-import { formatCurrency, formatPercent } from '@/utils/formatters';
-import { formatDateTime, formatMonth } from '@/utils/dateUtils';
+import { formatCurrency, formatPercent, formatDuration } from '@/utils/formatters';
+import { formatDateTime, formatMonth, formatTime, getStudioTypeLabel } from '@/utils/dateUtils';
 import type { Settlement, SettlementStatus } from '@/types';
 
 export function Settlement() {
@@ -34,9 +40,14 @@ export function Settlement() {
     getArtistById,
     getStudioById,
     getSettlementByBookingId,
+    getMastersByBookingId,
+    confirmMasterDelivery,
     highlight,
+    setHighlight,
     clearHighlight,
   } = useAppStore();
+
+  const navigate = useNavigate();
 
   const currentDate = new Date();
   const defaultMonth = format(currentDate, 'yyyy-MM');
@@ -52,6 +63,9 @@ export function Settlement() {
   const [showNoSettlementBanner, setShowNoSettlementBanner] = useState(false);
   const [noSettlementBookingId, setNoSettlementBookingId] = useState<string>('');
   const highlightClearTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const [isDetailOpen, setIsDetailOpen] = useState(false);
+  const [detailBookingId, setDetailBookingId] = useState<string>('');
+  const [studioNameForBanner, setStudioNameForBanner] = useState<string>('');
 
   const monthOptions = useMemo(() => {
     const options: { value: string; label: string }[] = [];
@@ -178,25 +192,50 @@ export function Settlement() {
   }, [selectedIds, settlements]);
 
   useEffect(() => {
-    if (!highlight?.bookingId) return;
-    const bookingId = highlight.bookingId;
-    const booking = getBookingById(bookingId);
-    if (booking) {
-      const artist = getArtistById(booking.artistId);
-      if (artist) {
-        setSelectedArtistId(artist.id);
+    if (!highlight) return;
+
+    if (highlight.month) {
+      setSelectedMonth(highlight.month);
+    }
+
+    if (highlight.artistId) {
+      setSelectedArtistId(highlight.artistId);
+    }
+
+    if (highlight.studioId) {
+      const studio = getStudioById(highlight.studioId);
+      if (studio) {
+        setStudioNameForBanner(studio.name);
       }
-    }
-    setSelectedStatus('all');
-    const settlement = getSettlementByBookingId(bookingId);
-    if (settlement) {
-      setHighlightedSettlementIds(new Set([settlement.id]));
-      setShowNoSettlementBanner(false);
     } else {
-      setNoSettlementBookingId(bookingId);
-      setShowNoSettlementBanner(true);
-      setHighlightedSettlementIds(new Set());
+      setStudioNameForBanner('');
     }
+
+    setSelectedStatus('all');
+
+    if (highlight.bookingId) {
+      const bookingId = highlight.bookingId;
+      const booking = getBookingById(bookingId);
+      if (booking && !highlight.artistId) {
+        const artist = getArtistById(booking.artistId);
+        if (artist) {
+          setSelectedArtistId(artist.id);
+        }
+      }
+      const settlement = getSettlementByBookingId(bookingId);
+      if (settlement) {
+        setHighlightedSettlementIds(new Set([settlement.id]));
+        setShowNoSettlementBanner(false);
+      } else {
+        setNoSettlementBookingId(bookingId);
+        setShowNoSettlementBanner(true);
+        setHighlightedSettlementIds(new Set());
+      }
+    } else {
+      setHighlightedSettlementIds(new Set());
+      setShowNoSettlementBanner(false);
+    }
+
     if (highlightClearTimerRef.current) {
       clearTimeout(highlightClearTimerRef.current);
     }
@@ -209,7 +248,7 @@ export function Settlement() {
         clearTimeout(highlightClearTimerRef.current);
       }
     };
-  }, [highlight?.bookingId, highlight?.timestamp, getBookingById, getArtistById, getSettlementByBookingId, clearHighlight]);
+  }, [highlight?.bookingId, highlight?.artistId, highlight?.studioId, highlight?.month, highlight?.timestamp, getBookingById, getArtistById, getStudioById, getSettlementByBookingId, clearHighlight]);
 
   useEffect(() => {
     setSelectedIds((prevSelected) => {
@@ -239,6 +278,16 @@ export function Settlement() {
       newExpanded.add(id);
     }
     setExpandedRows(newExpanded);
+  };
+
+  const handleRowClick = (settlement: Settlement) => {
+    toggleRow(settlement.id);
+    setDetailBookingId(settlement.bookingId);
+    setIsDetailOpen(true);
+  };
+
+  const closeDetail = () => {
+    setIsDetailOpen(false);
   };
 
   const handleMarkPaid = (settlementId: string, e: MouseEvent) => {
@@ -706,6 +755,23 @@ export function Settlement() {
         </div>
       )}
 
+      {studioNameForBanner && (
+        <div className="flex items-center justify-between p-4 rounded-xl bg-gradient-to-r from-neon-purple/20 via-neon-purple/10 to-neon-purple/20 border border-neon-purple/30 animate-slide-up">
+          <div className="flex items-center gap-3">
+            <Calendar className="w-5 h-5 text-neon-purple flex-shrink-0" />
+            <p className="text-neon-purple font-medium">
+              来自录音棚：{studioNameForBanner}
+            </p>
+          </div>
+          <button
+            onClick={() => setStudioNameForBanner('')}
+            className="p-1.5 rounded-lg hover:bg-neon-purple/20 transition-colors"
+          >
+            <X className="w-4 h-4 text-neon-purple" />
+          </button>
+        </div>
+      )}
+
       <div className="card">
         {selectedIds.size > 0 && (
           <div className="sticky top-0 z-10 mb-4 -mx-6 -mt-6 px-6 py-4 bg-gradient-to-r from-gold/20 via-gold/10 to-gold/20 border-b border-gold/20 rounded-t-xl flex items-center justify-between">
@@ -765,7 +831,7 @@ export function Settlement() {
                 filteredSettlements.map((row, index) => (
                   <Fragment key={row.id}>
                     <tr
-                      onClick={() => toggleRow(row.id)}
+                      onClick={() => handleRowClick(row)}
                       className={`border-b border-gold/5 transition-all duration-300 cursor-pointer hover:bg-gold/5 ${
                         index % 2 === 0 ? 'bg-bg-secondary/30' : ''
                       } ${
@@ -858,6 +924,249 @@ export function Settlement() {
           </div>
         </div>
       </Modal>
+
+      {isDetailOpen && (
+        <div
+          className="fixed inset-0 bg-black/50 z-40 transition-opacity duration-300"
+          onClick={closeDetail}
+        />
+      )}
+
+      <div
+        className={`fixed right-0 top-0 h-full w-[400px] bg-bg-primary border-l border-gold/20 z-50 overflow-y-auto transition-transform duration-300 ${
+          isDetailOpen ? 'translate-x-0' : 'translate-x-full'
+        }`}
+      >
+        {(() => {
+          const booking = getBookingById(detailBookingId);
+          if (!booking) return null;
+          const artist = getArtistById(booking.artistId);
+          const studio = booking.studioId ? getStudioById(booking.studioId) : undefined;
+          const settlement = getSettlementByBookingId(detailBookingId);
+          const masters = getMastersByBookingId(detailBookingId);
+
+          return (
+            <div className="p-6 space-y-6">
+              <div className="flex items-center justify-between">
+                <h3 className="font-display text-xl font-bold text-text-primary">订单详情</h3>
+                <button
+                  onClick={closeDetail}
+                  className="p-2 rounded-lg hover:bg-gold/10 transition-colors"
+                >
+                  <X className="w-5 h-5 text-text-muted" />
+                </button>
+              </div>
+
+              <div className="space-y-4">
+                <div className="text-2xl font-display font-bold text-gold">
+                  {artist?.name || '未知艺人'}
+                </div>
+                <div className="space-y-2 text-sm">
+                  <div className="flex items-center gap-2 text-text-secondary">
+                    <Calendar className="w-4 h-4 text-gold flex-shrink-0" />
+                    <span>{studio ? `${studio.name}（${getStudioTypeLabel(studio.type)}）` : '未分配'}</span>
+                  </div>
+                  <div className="flex items-center gap-2 text-text-secondary">
+                    <Clock className="w-4 h-4 text-gold flex-shrink-0" />
+                    <span>{formatDateTime(booking.startTime)} ~ {formatTime(booking.endTime)}</span>
+                  </div>
+                  <div className="flex items-center gap-2 text-text-secondary">
+                    <Clock className="w-4 h-4 text-gold flex-shrink-0" />
+                    <span>{formatDuration(booking.duration)}</span>
+                  </div>
+                  {booking.attendeeCount && (
+                    <div className="flex items-center gap-2 text-text-secondary">
+                      <Users className="w-4 h-4 text-gold flex-shrink-0" />
+                      <span>{booking.attendeeCount} 人</span>
+                    </div>
+                  )}
+                  <div className="flex items-center gap-2">
+                    <StatusBadge status={booking.status} type="booking" />
+                  </div>
+                  {booking.allocationReason && (
+                    <div className="text-text-muted text-xs">
+                      分配理由：{booking.allocationReason}
+                    </div>
+                  )}
+                  {booking.notes && (
+                    <div className="text-text-muted text-xs">
+                      备注：{booking.notes}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="h-px bg-gold/20" />
+
+              {settlement && (
+                <div className="space-y-4">
+                  <div>
+                    <div className="text-sm text-text-muted mb-1">订单金额</div>
+                    <div className="font-display text-3xl font-bold text-gold">
+                      {formatCurrency(settlement.totalAmount)}
+                    </div>
+                  </div>
+
+                  <div className="bg-bg-tertiary/50 rounded-xl p-4 border border-gold/10 space-y-3">
+                    <div className="flex items-center gap-3 text-sm">
+                      <span className="text-gold font-display">{formatCurrency(settlement.totalAmount)}</span>
+                      <span className="text-text-muted">×</span>
+                      <span className="text-neon-purple font-display">{formatPercent(settlement.commissionRate)}</span>
+                      <span className="text-text-muted">=</span>
+                      <span className="text-neon-red font-display">{formatCurrency(settlement.commissionAmount)}</span>
+                    </div>
+                    <div className="h-px bg-gold/10" />
+                    <div className="flex items-center gap-3 text-sm">
+                      <span className="text-gold font-display">{formatCurrency(settlement.totalAmount)}</span>
+                      <span className="text-text-muted">−</span>
+                      <span className="text-neon-red font-display">{formatCurrency(settlement.commissionAmount)}</span>
+                      <span className="text-text-muted">=</span>
+                      <span className="text-neon-green font-display font-bold text-lg">{formatCurrency(settlement.artistAmount)}</span>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm text-text-muted">结算状态</span>
+                    <StatusBadge status={settlement.status} type="settlement" />
+                  </div>
+
+                  {settlement.status === 'UNSETTLED' && (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        markSettlementPaid(settlement.id);
+                      }}
+                      className="btn-gold flex items-center gap-2 text-sm w-full justify-center"
+                    >
+                      <CheckCircle className="w-4 h-4" />
+                      标记已结算
+                    </button>
+                  )}
+
+                  {settlement.status === 'SETTLED' && (
+                    <div className="text-sm text-text-muted">
+                      结算时间：{formatDateTime(settlement.settlementDate)}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {masters.length > 0 && (
+                <>
+                  <div className="h-px bg-gold/20" />
+                  <div className="space-y-3">
+                    <h4 className="font-display text-sm font-semibold text-text-primary">母带版本</h4>
+                    {masters.map((m) => (
+                      <div key={m.id} className="bg-bg-tertiary/50 rounded-xl p-3 border border-gold/10 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-sm font-medium text-text-primary">v{m.version}</span>
+                          {m.isConfirmed ? (
+                            <span className="text-xs text-neon-green flex items-center gap-1">
+                              <CheckCircle2 className="w-3.5 h-3.5" />
+                              已确认
+                            </span>
+                          ) : (
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                confirmMasterDelivery(m.id);
+                              }}
+                              className="text-xs btn-gold py-1 px-2"
+                            >
+                              确认
+                            </button>
+                          )}
+                        </div>
+                        <div className="text-xs text-text-muted">
+                          交付：{formatDateTime(m.deliveredAt)}
+                        </div>
+                        {m.notes && (
+                          <div className="text-xs text-text-muted">{m.notes}</div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
+
+              <div className="h-px bg-gold/20" />
+
+              <div className="space-y-3">
+                <h4 className="font-display text-sm font-semibold text-text-primary">操作历史</h4>
+                <div className="relative pl-4 border-l-2 border-gold/20 space-y-3">
+                  <div className="relative">
+                    <div className="absolute -left-[21px] w-3 h-3 rounded-full bg-gold/40 border-2 border-bg-primary" />
+                    <div className="text-xs text-text-muted">创建</div>
+                    <div className="text-sm text-text-primary">{formatDateTime(booking.createdAt)}</div>
+                  </div>
+                  {booking.allocationReason && (
+                    <div className="relative">
+                      <div className="absolute -left-[21px] w-3 h-3 rounded-full bg-neon-purple/40 border-2 border-bg-primary" />
+                      <div className="text-xs text-text-muted">分配</div>
+                      <div className="text-sm text-text-primary">{booking.allocationReason}</div>
+                    </div>
+                  )}
+                  {(booking.status === 'CONFIRMED' || booking.status === 'COMPLETED') && (
+                    <div className="relative">
+                      <div className="absolute -left-[21px] w-3 h-3 rounded-full bg-neon-green/40 border-2 border-bg-primary" />
+                      <div className="text-xs text-text-muted">确认</div>
+                    </div>
+                  )}
+                  {booking.status === 'COMPLETED' && (
+                    <div className="relative">
+                      <div className="absolute -left-[21px] w-3 h-3 rounded-full bg-gold/40 border-2 border-bg-primary" />
+                      <div className="text-xs text-text-muted">完成</div>
+                    </div>
+                  )}
+                  {settlement?.status === 'SETTLED' && (
+                    <div className="relative">
+                      <div className="absolute -left-[21px] w-3 h-3 rounded-full bg-neon-green/40 border-2 border-bg-primary" />
+                      <div className="text-xs text-text-muted">结算</div>
+                      <div className="text-sm text-text-primary">{formatDateTime(settlement.settlementDate)}</div>
+                    </div>
+                  )}
+                  {masters.length > 0 && (
+                    <div className="relative">
+                      <div className="absolute -left-[21px] w-3 h-3 rounded-full bg-neon-purple/40 border-2 border-bg-primary" />
+                      <div className="text-xs text-text-muted">母带交付</div>
+                      <div className="text-sm text-text-primary">{formatDateTime(masters[0].deliveredAt)}</div>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="h-px bg-gold/20" />
+
+              <div className="flex gap-3">
+                {booking.studioId && (
+                  <button
+                    onClick={() => {
+                      const month = format(booking.startTime, 'yyyy-MM');
+                      setHighlight({ studioId: booking.studioId, month });
+                      navigate('/studios');
+                    }}
+                    className="btn-outline flex items-center gap-2 text-sm flex-1 justify-center"
+                  >
+                    <FileText className="w-4 h-4" />
+                    查看排期
+                  </button>
+                )}
+                <button
+                  onClick={() => {
+                    const month = format(booking.startTime, 'yyyy-MM');
+                    setHighlight({ bookingId: booking.id, artistId: booking.artistId, month });
+                    navigate('/masters');
+                  }}
+                  className="btn-gold flex items-center gap-2 text-sm flex-1 justify-center"
+                >
+                  <Disc className="w-4 h-4" />
+                  查看母带
+                </button>
+              </div>
+            </div>
+          );
+        })()}
+      </div>
     </div>
   );
 }

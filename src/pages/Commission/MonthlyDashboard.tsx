@@ -9,7 +9,6 @@ import {
   Users,
   FileText,
   Disc,
-  Eye,
 } from 'lucide-react';
 import { format, isSameMonth, subMonths } from 'date-fns';
 import { zhCN } from 'date-fns/locale';
@@ -32,6 +31,7 @@ interface StudioSummary {
   utilization: number;
   unsettledAmount: number;
   pendingMasters: number;
+  maxUnsettledArtistId: string | null;
 }
 
 interface ArtistSummary {
@@ -76,6 +76,8 @@ export function MonthlyDashboard() {
 
   const [selectedMonth, setSelectedMonth] = useState<Date>(currentDate);
   const [dimension, setDimension] = useState<Dimension>('studio');
+
+  const monthStr = format(selectedMonth, 'yyyy-MM');
 
   const filteredBookings = useMemo(() => {
     return bookings.filter((b) => isSameMonth(b.startTime, selectedMonth));
@@ -124,8 +126,6 @@ export function MonthlyDashboard() {
     return studios.map((studio) => {
       const studioBookingsCompleted = completedBookings.filter((b) => b.studioId === studio.id);
       const studioBookingsActive = activeBookings.filter((b) => b.studioId === studio.id);
-      const studioBookingIds = new Set(studioBookingsCompleted.map((b) => b.id));
-      const studioBookingIdsAll = new Set(filteredBookings.filter((b) => b.studioId === studio.id).map((b) => b.id));
 
       const revenue = studioBookingsCompleted.reduce((sum, b) => sum + b.totalAmount, 0);
       const durationMinutes = studioBookingsActive.reduce((sum, b) => sum + b.duration, 0);
@@ -139,6 +139,20 @@ export function MonthlyDashboard() {
       const unsettledAmount = studioSettlements
         .filter((s) => s.status === 'UNSETTLED')
         .reduce((sum, s) => sum + s.artistAmount, 0);
+
+      const artistUnsettledMap: Record<string, number> = {};
+      studioSettlements
+        .filter((s) => s.status === 'UNSETTLED')
+        .forEach((s) => {
+          const booking = bookings.find((b) => b.id === s.bookingId);
+          if (booking) {
+            artistUnsettledMap[booking.artistId] =
+              (artistUnsettledMap[booking.artistId] || 0) + s.artistAmount;
+          }
+        });
+      const maxUnsettledArtistId = Object.entries(artistUnsettledMap).sort(
+        (a, b) => b[1] - a[1]
+      )[0]?.[0] || null;
 
       const pendingMasters = filteredMasters.filter((m) => {
         const booking = bookings.find((b) => b.id === m.bookingId);
@@ -154,6 +168,7 @@ export function MonthlyDashboard() {
         utilization,
         unsettledAmount,
         pendingMasters,
+        maxUnsettledArtistId,
       };
     });
   }, [studios, completedBookings, activeBookings, filteredBookings, filteredSettlements, filteredMasters, bookings]);
@@ -161,7 +176,6 @@ export function MonthlyDashboard() {
   const artistSummaries = useMemo((): ArtistSummary[] => {
     return artists.map((artist) => {
       const artistBookingsCompleted = completedBookings.filter((b) => b.artistId === artist.id);
-      const artistBookingIds = new Set(artistBookingsCompleted.map((b) => b.id));
 
       const revenue = artistBookingsCompleted.reduce((sum, b) => sum + b.totalAmount, 0);
       const orderCount = artistBookingsCompleted.length;
@@ -198,22 +212,45 @@ export function MonthlyDashboard() {
     });
   }, [artists, completedBookings, filteredSettlements, filteredMasters, bookings, tiers]);
 
-  const handleViewStudioDetail = (studioId: string) => {
-    setHighlight({ bookingId: undefined });
+  const handleViewStudioSchedule = (studioId: string) => {
+    setHighlight({ studioId, month: monthStr });
     navigate('/studios');
   };
 
-  const handleViewSettlement = (bookingId: string | null) => {
-    if (bookingId) {
-      setHighlight({ bookingId });
-    }
+  const handleViewStudioSettlement = (studioId: string, maxUnsettledArtistId: string | null) => {
+    setHighlight({
+      studioId,
+      month: monthStr,
+      artistId: maxUnsettledArtistId || undefined,
+    });
     navigate('/settlement');
   };
 
-  const handleViewMasters = (bookingId: string | null) => {
-    if (bookingId) {
-      setHighlight({ bookingId });
-    }
+  const handleViewStudioMasters = (studioId: string) => {
+    setHighlight({ studioId, month: monthStr });
+    navigate('/masters');
+  };
+
+  const handleViewArtistSettlement = (artistId: string) => {
+    setHighlight({ artistId, month: monthStr });
+    navigate('/settlement');
+  };
+
+  const handleViewArtistSettlementDetail = (artistId: string, bookingId: string | null) => {
+    setHighlight({
+      artistId,
+      month: monthStr,
+      bookingId: bookingId || undefined,
+    });
+    navigate('/settlement');
+  };
+
+  const handleViewArtistMasters = (artistId: string, bookingId: string | null) => {
+    setHighlight({
+      artistId,
+      month: monthStr,
+      bookingId: bookingId || undefined,
+    });
     navigate('/masters');
   };
 
@@ -307,7 +344,6 @@ export function MonthlyDashboard() {
                 <th className="px-4 py-3 text-left text-sm font-semibold text-gold w-48">利用率</th>
                 <th className="px-4 py-3 text-right text-sm font-semibold text-gold">未结算</th>
                 <th className="px-4 py-3 text-center text-sm font-semibold text-gold">母带待确认</th>
-                <th className="px-4 py-3 text-center text-sm font-semibold text-gold">操作</th>
               </tr>
             </thead>
             <tbody>
@@ -317,12 +353,15 @@ export function MonthlyDashboard() {
                   className="border-b border-gold/10 hover:bg-gold/5 transition-colors"
                 >
                   <td className="px-4 py-4">
-                    <div className="flex items-center gap-3">
+                    <div
+                      className="flex items-center gap-3 cursor-pointer group/name"
+                      onClick={() => handleViewStudioSchedule(summary.studioId)}
+                    >
                       <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-gold/20 to-gold-dark/10 flex items-center justify-center">
                         <Building2 className="w-5 h-5 text-gold" />
                       </div>
                       <div>
-                        <span className="font-medium text-text-primary block">
+                        <span className="font-medium text-text-primary block group-hover/name:text-gold transition-colors">
                           {summary.studioName}
                         </span>
                         <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-gold/15 text-gold mt-1">
@@ -355,29 +394,26 @@ export function MonthlyDashboard() {
                     </div>
                   </td>
                   <td className="px-4 py-4 text-right">
-                    <span className="text-warning font-medium">
+                    <span
+                      className={`font-medium cursor-pointer hover:underline ${
+                        summary.unsettledAmount > 0 ? 'text-warning' : 'text-text-muted'
+                      }`}
+                      onClick={() => handleViewStudioSettlement(summary.studioId, summary.maxUnsettledArtistId)}
+                    >
                       {formatCurrency(summary.unsettledAmount)}
                     </span>
                   </td>
                   <td className="px-4 py-4 text-center">
                     <span
-                      className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium ${
+                      className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium cursor-pointer hover:opacity-80 transition-opacity ${
                         summary.pendingMasters > 0
                           ? 'bg-neon-red/20 text-neon-red'
                           : 'bg-bg-tertiary text-text-muted'
                       }`}
+                      onClick={() => handleViewStudioMasters(summary.studioId)}
                     >
                       {summary.pendingMasters}
                     </span>
-                  </td>
-                  <td className="px-4 py-4 text-center">
-                    <button
-                      onClick={() => handleViewStudioDetail(summary.studioId)}
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium border border-gold/30 text-gold hover:bg-gold/10 hover:border-gold transition-all duration-200"
-                    >
-                      <Eye className="w-3.5 h-3.5" />
-                      查看明细
-                    </button>
                   </td>
                 </tr>
               ))}
@@ -405,11 +441,14 @@ export function MonthlyDashboard() {
                   className="border-b border-gold/10 hover:bg-gold/5 transition-colors"
                 >
                   <td className="px-4 py-4">
-                    <div className="flex items-center gap-3">
+                    <div
+                      className="flex items-center gap-3 cursor-pointer group/name"
+                      onClick={() => handleViewArtistSettlement(summary.artistId)}
+                    >
                       <div className="w-10 h-10 rounded-full bg-gradient-to-br from-gold/20 to-gold-dark/10 flex items-center justify-center">
                         <Users className="w-5 h-5 text-gold" />
                       </div>
-                      <span className="font-medium text-text-primary">
+                      <span className="font-medium text-text-primary group-hover/name:text-gold transition-colors">
                         {summary.artistName}
                       </span>
                     </div>
@@ -451,14 +490,14 @@ export function MonthlyDashboard() {
                   <td className="px-4 py-4">
                     <div className="flex items-center justify-center gap-2">
                       <button
-                        onClick={() => handleViewSettlement(summary.lastCompletedBookingId)}
+                        onClick={() => handleViewArtistSettlementDetail(summary.artistId, summary.lastCompletedBookingId)}
                         className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium border border-gold/30 text-gold hover:bg-gold/10 hover:border-gold transition-all duration-200"
                       >
                         <FileText className="w-3.5 h-3.5" />
                         查看对账单
                       </button>
                       <button
-                        onClick={() => handleViewMasters(summary.lastCompletedBookingId)}
+                        onClick={() => handleViewArtistMasters(summary.artistId, summary.lastCompletedBookingId)}
                         className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium border border-gold/30 text-gold hover:bg-gold/10 hover:border-gold transition-all duration-200"
                       >
                         <Disc className="w-3.5 h-3.5" />

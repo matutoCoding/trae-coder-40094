@@ -13,29 +13,43 @@ import {
   Music,
   AlertTriangle,
   X,
+  Calendar,
+  Building2,
+  DollarSign,
+  FileText,
+  Users,
 } from 'lucide-react';
+import { format } from 'date-fns';
+import { useNavigate } from 'react-router-dom';
 import { useAppStore } from '@/store/useAppStore';
 import { Modal } from '@/components/ui/Modal';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { formatDateTime } from '@/utils/dateUtils';
+import { formatCurrency, formatDuration, formatPercent } from '@/utils/formatters';
 import type { MasterDelivery } from '@/types';
 
 export function Masters() {
+  const navigate = useNavigate();
   const {
     masters,
     bookings,
     artists,
+    studios,
     addMasterDelivery,
     confirmMasterDelivery,
     getMastersByBookingId,
     getArtistById,
     getBookingById,
+    getStudioById,
+    getSettlementByBookingId,
     highlight,
+    setHighlight,
     clearHighlight,
   } = useAppStore();
 
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedArtistId, setSelectedArtistId] = useState<string>('');
+  const [selectedMonth, setSelectedMonth] = useState<string>('');
   const [isFilterOpen, setIsFilterOpen] = useState(false);
   const [formData, setFormData] = useState({
     bookingId: '',
@@ -46,6 +60,7 @@ export function Masters() {
   const [highlightedMasterIds, setHighlightedMasterIds] = useState<Set<string>>(new Set());
   const [showBanner, setShowBanner] = useState(false);
   const [bannerBookingId, setBannerBookingId] = useState<string>('');
+  const [selectedBookingId, setSelectedBookingId] = useState<string | null>(null);
   const highlightClearTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   const unconfirmedMasters = useMemo(
@@ -62,6 +77,13 @@ export function Masters() {
       filteredBookings = filteredBookings.filter(
         (b) => b.artistId === selectedArtistId
       );
+    }
+
+    if (selectedMonth) {
+      filteredBookings = filteredBookings.filter((b) => {
+        const bookingMonth = format(b.startTime, 'yyyy-MM');
+        return bookingMonth === selectedMonth;
+      });
     }
 
     return filteredBookings.sort((a, b) => {
@@ -82,7 +104,17 @@ export function Masters() {
         new Date(latestA.deliveredAt).getTime()
       );
     });
-  }, [bookings, selectedArtistId, getMastersByBookingId]);
+  }, [bookings, selectedArtistId, selectedMonth, getMastersByBookingId]);
+
+  const selectedBooking = useMemo(() => {
+    if (!selectedBookingId) return null;
+    return getBookingById(selectedBookingId) || null;
+  }, [selectedBookingId, getBookingById]);
+
+  const selectedBookingSettlement = useMemo(() => {
+    if (!selectedBookingId) return null;
+    return getSettlementByBookingId(selectedBookingId) || null;
+  }, [selectedBookingId, getSettlementByBookingId]);
 
   const handleAddMaster = () => {
     if (!formData.bookingId || !formData.version || !formData.downloadUrl)
@@ -125,20 +157,71 @@ export function Masters() {
     return getMastersByBookingId(bookingId).some((m) => !m.isConfirmed);
   };
 
+  const handleOpenDetail = (bookingId: string) => {
+    setSelectedBookingId(bookingId);
+  };
+
+  const handleCloseDetail = () => {
+    setSelectedBookingId(null);
+  };
+
+  const handleAddVersionForBooking = (bookingId: string) => {
+    setFormData({
+      bookingId,
+      version: '',
+      downloadUrl: '',
+      notes: '',
+    });
+    setIsModalOpen(true);
+  };
+
+  const handleViewSchedule = () => {
+    if (!selectedBooking) return;
+    const studioId = selectedBooking.studioId;
+    const month = format(selectedBooking.startTime, 'yyyy-MM');
+    setHighlight({ studioId: studioId || undefined, month });
+    navigate('/studios');
+  };
+
+  const handleViewSettlement = () => {
+    if (!selectedBooking) return;
+    const month = format(selectedBooking.startTime, 'yyyy-MM');
+    setHighlight({
+      bookingId: selectedBooking.id,
+      artistId: selectedBooking.artistId,
+      month,
+    });
+    navigate('/settlement');
+  };
+
   useEffect(() => {
-    if (!highlight?.bookingId) return;
-    const bookingId = highlight.bookingId;
-    const booking = getBookingById(bookingId);
-    if (booking) {
-      setSelectedArtistId(booking.artistId);
+    if (!highlight) return;
+
+    if (highlight.artistId) {
+      setSelectedArtistId(highlight.artistId);
       setIsFilterOpen(true);
     }
-    const bookingMasters = getMastersByBookingId(bookingId);
-    if (bookingMasters.length > 0) {
-      setHighlightedMasterIds(new Set(bookingMasters.map((m) => m.id)));
+
+    if (highlight.month) {
+      setSelectedMonth(highlight.month);
     }
-    setBannerBookingId(bookingId);
-    setShowBanner(true);
+
+    if (highlight.bookingId) {
+      const bookingId = highlight.bookingId;
+      const booking = getBookingById(bookingId);
+      if (booking) {
+        setSelectedArtistId(booking.artistId);
+        setIsFilterOpen(true);
+      }
+      const bookingMasters = getMastersByBookingId(bookingId);
+      if (bookingMasters.length > 0) {
+        setHighlightedMasterIds(new Set(bookingMasters.map((m) => m.id)));
+        setSelectedBookingId(bookingId);
+      }
+      setBannerBookingId(bookingId);
+      setShowBanner(true);
+    }
+
     if (highlightClearTimerRef.current) {
       clearTimeout(highlightClearTimerRef.current);
     }
@@ -151,7 +234,7 @@ export function Masters() {
         clearTimeout(highlightClearTimerRef.current);
       }
     };
-  }, [highlight?.bookingId, highlight?.timestamp, getBookingById, getMastersByBookingId, clearHighlight]);
+  }, [highlight?.bookingId, highlight?.artistId, highlight?.month, highlight?.timestamp, getBookingById, getMastersByBookingId, clearHighlight]);
 
   return (
     <div className="space-y-6">
@@ -208,9 +291,34 @@ export function Masters() {
                 ))}
               </select>
             </div>
-            {selectedArtistId && (
+            <div className="flex-1">
+              <label className="block text-sm font-medium text-text-primary mb-2">
+                <Calendar className="w-4 h-4 inline mr-2 text-gold" />
+                按月份筛选
+              </label>
+              <select
+                value={selectedMonth}
+                onChange={(e) => setSelectedMonth(e.target.value)}
+                className="input-field"
+              >
+                <option value="">全部月份</option>
+                {Array.from(new Set(
+                  bookings
+                    .filter((b) => getMastersByBookingId(b.id).length > 0)
+                    .map((b) => format(b.startTime, 'yyyy-MM'))
+                )).sort().map((month) => (
+                  <option key={month} value={month}>
+                    {month}
+                  </option>
+                ))}
+              </select>
+            </div>
+            {(selectedArtistId || selectedMonth) && (
               <button
-                onClick={() => setSelectedArtistId('')}
+                onClick={() => {
+                  setSelectedArtistId('');
+                  setSelectedMonth('');
+                }}
                 className="btn-ghost mt-6"
               >
                 清除筛选
@@ -273,11 +381,11 @@ export function Masters() {
               暂无母带记录
             </h3>
             <p className="text-text-muted mb-6">
-              {selectedArtistId
-                ? '该艺人暂无母带交付记录'
+              {selectedArtistId || selectedMonth
+                ? '当前筛选条件下暂无母带交付记录'
                 : '点击右上角按钮添加第一条母带交付记录'}
             </p>
-            {!selectedArtistId && (
+            {!selectedArtistId && !selectedMonth && (
               <button
                 onClick={() => setIsModalOpen(true)}
                 className="btn-gold inline-flex items-center gap-2"
@@ -291,7 +399,8 @@ export function Masters() {
           bookingsWithMasters.map((booking) => (
             <div
               key={booking.id}
-              className="card group hover:-translate-y-1 transition-all duration-300"
+              className="card group hover:-translate-y-1 transition-all duration-300 cursor-pointer"
+              onClick={() => handleOpenDetail(booking.id)}
             >
               <div className="flex items-start justify-between mb-6">
                 <div className="flex items-center gap-4">
@@ -403,7 +512,10 @@ export function Masters() {
 
                             <div className="flex items-center gap-2">
                               <button
-                                onClick={() => handleDownload(master.downloadUrl)}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleDownload(master.downloadUrl);
+                                }}
                                 className="btn-outline text-sm flex items-center gap-1 px-4 py-2"
                               >
                                 <Download className="w-4 h-4" />
@@ -411,7 +523,10 @@ export function Masters() {
                               </button>
                               {!master.isConfirmed && (
                                 <button
-                                  onClick={() => handleConfirm(master.id)}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleConfirm(master.id);
+                                  }}
                                   className="btn-gold text-sm flex items-center gap-1 px-4 py-2"
                                 >
                                   <CheckCircle className="w-4 h-4" />
@@ -430,6 +545,223 @@ export function Masters() {
           ))
         )}
       </div>
+
+      {selectedBookingId && selectedBooking && (
+        <div className="fixed inset-0 z-40">
+          <div
+            className="absolute inset-0 bg-black/50"
+            onClick={handleCloseDetail}
+          />
+          <div className="absolute right-0 top-0 bottom-0 w-[400px] bg-bg-secondary border-l border-gold/20 shadow-gold animate-slide-in-right overflow-y-auto">
+            <div className="p-6">
+              <div className="flex items-center justify-between mb-6">
+                <h2 className="font-display text-xl font-bold text-text-primary">
+                  订单详情
+                </h2>
+                <button
+                  onClick={handleCloseDetail}
+                  className="p-2 rounded-lg hover:bg-gold/10 transition-colors"
+                >
+                  <X className="w-5 h-5 text-text-muted" />
+                </button>
+              </div>
+
+              <div className="space-y-6">
+                <div>
+                  <div className="flex items-center gap-2 mb-4">
+                    <Calendar className="w-5 h-5 text-gold" />
+                    <h3 className="font-display text-lg font-semibold text-text-primary">预约信息</h3>
+                  </div>
+                  <div className="space-y-3 bg-bg-tertiary/50 rounded-xl p-4 border border-gold/10">
+                    <div className="flex justify-between">
+                      <span className="text-sm text-text-muted flex items-center gap-1">
+                        <User className="w-3.5 h-3.5" />
+                        艺人
+                      </span>
+                      <span className="text-sm text-text-primary font-medium">
+                        {getArtistById(selectedBooking.artistId)?.name || '未知艺人'}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-sm text-text-muted flex items-center gap-1">
+                        <Building2 className="w-3.5 h-3.5" />
+                        录音棚
+                      </span>
+                      <span className="text-sm text-text-primary font-medium">
+                        {selectedBooking.studioId
+                          ? getStudioById(selectedBooking.studioId)?.name || '未知录音棚'
+                          : '待分配'}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-sm text-text-muted flex items-center gap-1">
+                        <Clock className="w-3.5 h-3.5" />
+                        时间
+                      </span>
+                      <span className="text-sm text-text-primary font-medium">
+                        {formatDateTime(selectedBooking.startTime)}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-sm text-text-muted">时长</span>
+                      <span className="text-sm text-text-primary font-medium">
+                        {formatDuration(selectedBooking.duration)}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-sm text-text-muted flex items-center gap-1">
+                        <Users className="w-3.5 h-3.5" />
+                        人数
+                      </span>
+                      <span className="text-sm text-text-primary font-medium">
+                        {selectedBooking.attendeeCount || '-'} 人
+                      </span>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span className="text-sm text-text-muted">状态</span>
+                      <StatusBadge status={selectedBooking.status} />
+                    </div>
+                  </div>
+                </div>
+
+                <div>
+                  <div className="flex items-center gap-2 mb-4">
+                    <DollarSign className="w-5 h-5 text-gold" />
+                    <h3 className="font-display text-lg font-semibold text-text-primary">金额信息</h3>
+                  </div>
+                  <div className="space-y-3 bg-bg-tertiary/50 rounded-xl p-4 border border-gold/10">
+                    <div className="flex justify-between">
+                      <span className="text-sm text-text-muted">订单金额</span>
+                      <span className="text-sm font-display font-bold text-gold">
+                        {formatCurrency(selectedBooking.totalAmount)}
+                      </span>
+                    </div>
+                    {selectedBookingSettlement && (
+                      <>
+                        <div className="h-px bg-gold/10" />
+                        <div className="flex justify-between">
+                          <span className="text-sm text-text-muted">抽成比例</span>
+                          <span className="text-sm text-neon-purple font-medium">
+                            {formatPercent(selectedBookingSettlement.commissionRate)}
+                          </span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-sm text-text-muted">抽成金额</span>
+                          <span className="text-sm text-neon-red font-medium">
+                            {formatCurrency(selectedBookingSettlement.commissionAmount)}
+                          </span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-sm text-text-muted">艺人所得</span>
+                          <span className="text-sm text-neon-green font-semibold">
+                            {formatCurrency(selectedBookingSettlement.artistAmount)}
+                          </span>
+                        </div>
+                        <div className="flex justify-between items-center">
+                          <span className="text-sm text-text-muted">结算状态</span>
+                          <StatusBadge status={selectedBookingSettlement.status} type="settlement" />
+                        </div>
+                      </>
+                    )}
+                    {!selectedBookingSettlement && (
+                      <div className="text-sm text-text-muted italic">
+                        暂未生成对账单
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                <div>
+                  <div className="flex items-center justify-between mb-4">
+                    <div className="flex items-center gap-2">
+                      <Disc className="w-5 h-5 text-gold" />
+                      <h3 className="font-display text-lg font-semibold text-text-primary">母带版本</h3>
+                    </div>
+                    <button
+                      onClick={() => handleAddVersionForBooking(selectedBooking.id)}
+                      className="btn-gold text-xs flex items-center gap-1 px-3 py-1.5"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      新增版本
+                    </button>
+                  </div>
+                  <div className="space-y-3">
+                    {getBookingMastersSorted(selectedBooking.id).length === 0 ? (
+                      <div className="bg-bg-tertiary/50 rounded-xl p-4 border border-gold/10 text-center">
+                        <Disc className="w-8 h-8 text-text-muted mx-auto mb-2" />
+                        <p className="text-sm text-text-muted">暂无母带版本</p>
+                      </div>
+                    ) : (
+                      getBookingMastersSorted(selectedBooking.id).map((master) => (
+                        <div
+                          key={master.id}
+                          className={`p-3 rounded-xl border transition-all ${
+                            master.isConfirmed
+                              ? 'border-neon-green/20 bg-neon-green/5'
+                              : 'border-neon-yellow/20 bg-neon-yellow/5'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between mb-2">
+                            <div className="flex items-center gap-2">
+                              <Disc
+                                className={`w-4 h-4 ${
+                                  master.isConfirmed ? 'text-neon-green' : 'text-neon-yellow'
+                                }`}
+                              />
+                              <span className="font-medium text-text-primary text-sm">
+                                {master.version}
+                              </span>
+                            </div>
+                            {master.isConfirmed ? (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-neon-green/20 text-neon-green text-xs font-medium">
+                                <CheckCircle className="w-3 h-3" />
+                                已确认
+                              </span>
+                            ) : (
+                              <button
+                                onClick={() => handleConfirm(master.id)}
+                                className="btn-gold text-xs flex items-center gap-1 px-3 py-1"
+                              >
+                                <CheckCircle className="w-3 h-3" />
+                                确认
+                              </button>
+                            )}
+                          </div>
+                          <div className="text-xs text-text-muted">
+                            交付: {formatDateTime(master.deliveredAt)}
+                          </div>
+                          {master.notes && (
+                            <div className="text-xs text-text-secondary mt-1">
+                              {master.notes}
+                            </div>
+                          )}
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+
+                <div className="space-y-3 pt-4 border-t border-gold/10">
+                  <button
+                    onClick={handleViewSchedule}
+                    className="w-full btn-outline flex items-center justify-center gap-2"
+                  >
+                    <Calendar className="w-4 h-4" />
+                    查看排期
+                  </button>
+                  <button
+                    onClick={handleViewSettlement}
+                    className="w-full btn-gold flex items-center justify-center gap-2"
+                  >
+                    <FileText className="w-4 h-4" />
+                    查看对账
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       <Modal
         isOpen={isModalOpen}

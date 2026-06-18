@@ -9,8 +9,10 @@ import {
   BookingRequest,
   AllocationResult,
   StudioBlockout,
+  BlockoutRule,
   HighlightState,
   BlockoutType,
+  RecurrencePattern,
 } from '../types';
 import { mockStudios } from '../data/mockStudios';
 import { mockArtists } from '../data/mockArtists';
@@ -23,9 +25,24 @@ import { calculateSettlement } from '../services/commission.service';
 import { calculateBookingAmount } from '../services/studio.service';
 import { generateId } from '../utils/formatters';
 import { isOverlapping, formatDateTime, formatDate } from '../utils/dateUtils';
-import { addDays, setHours, setMinutes, format, isSameDay } from 'date-fns';
+import {
+  addDays,
+  setHours,
+  setMinutes,
+  format,
+  isSameDay,
+  startOfWeek,
+  addWeeks,
+  addMonths,
+  getDate,
+  getDay,
+  getMonth,
+  getYear,
+  endOfMonth,
+  isWithinInterval,
+} from 'date-fns';
 
-const STORAGE_KEY = 'aurora-studio-data-v2';
+const STORAGE_KEY = 'aurora-studio-data-v3';
 
 interface PersistedData {
   studios: Studio[];
@@ -35,26 +52,34 @@ interface PersistedData {
   settlements: Settlement[];
   masters: MasterDelivery[];
   blockouts: StudioBlockout[];
+  blockoutRules: BlockoutRule[];
+  blockoutsInitialized: boolean;
 }
 
-const mockBlockouts: StudioBlockout[] = [
+const mockBlockoutRules: BlockoutRule[] = [
   {
-    id: 'blockout-001',
+    id: 'rule-001',
     studioId: 'studio-001',
-    startTime: setMinutes(setHours(addDays(new Date(), 1), 9), 0),
-    endTime: setMinutes(setHours(addDays(new Date(), 1), 12), 0),
     type: 'MAINTENANCE',
-    reason: '调音台定期检修和设备校准',
+    reason: '每周一上午设备检修校准',
     isAllDay: false,
+    startTime: '09:00',
+    endTime: '12:00',
+    recurrence: 'WEEKLY',
+    dayOfWeek: 1,
+    isActive: true,
   },
   {
-    id: 'blockout-002',
+    id: 'rule-002',
     studioId: 'studio-005',
-    startTime: setMinutes(setHours(addDays(new Date(), 3), 0), 0),
-    endTime: setMinutes(setHours(addDays(new Date(), 3), 23), 59),
     type: 'HOLIDAY',
-    reason: '春节假期停业维护',
+    reason: '每月末盘点停用',
     isAllDay: true,
+    startTime: '00:00',
+    endTime: '23:59',
+    recurrence: 'MONTHLY',
+    dayOfMonth: 28,
+    isActive: true,
   },
 ];
 
@@ -96,6 +121,8 @@ function loadFromStorage(): PersistedData | null {
       settlements: parseDateFields<Settlement[]>(data.settlements || []),
       masters: parseDateFields<MasterDelivery[]>(data.masters || []),
       blockouts: parseDateFields<StudioBlockout[]>(data.blockouts || []),
+      blockoutRules: data.blockoutRules || [],
+      blockoutsInitialized: data.blockoutsInitialized ?? false,
     };
   } catch (e) {
     console.error('Failed to load from localStorage', e);
@@ -113,6 +140,52 @@ function saveToStorage(data: PersistedData) {
 
 const persisted = loadFromStorage();
 
+export function expandBlockoutRules(rules: BlockoutRule[], startOfRange: Date, endOfRange: Date): StudioBlockout[] {
+  const result: StudioBlockout[] = [];
+
+  for (const rule of rules) {
+    if (!rule.isActive) continue;
+
+    let current = new Date(startOfRange);
+
+    while (current <= endOfRange) {
+      let shouldApply = false;
+
+      if (rule.recurrence === 'WEEKLY' && rule.dayOfWeek !== undefined) {
+        shouldApply = getDay(current) === rule.dayOfWeek;
+      } else if (rule.recurrence === 'MONTHLY' && rule.dayOfMonth !== undefined) {
+        shouldApply = getDate(current) === rule.dayOfMonth;
+      } else if (rule.recurrence === 'DAILY') {
+        shouldApply = true;
+      } else if (rule.recurrence === 'YEARLY') {
+        shouldApply = getDate(current) === (rule.dayOfMonth || 1) && getMonth(current) === 0;
+      }
+
+      if (shouldApply) {
+        const [sh, sm] = rule.startTime.split(':').map(Number);
+        const [eh, em] = rule.endTime.split(':').map(Number);
+        const blockStart = setMinutes(setHours(new Date(current), sh), sm);
+        const blockEnd = setMinutes(setHours(new Date(current), eh), em);
+
+        result.push({
+          id: `rule-${rule.id}-${format(current, 'yyyy-MM-dd')}`,
+          studioId: rule.studioId,
+          startTime: blockStart,
+          endTime: blockEnd,
+          type: rule.type,
+          reason: rule.reason,
+          isAllDay: rule.isAllDay,
+          ruleId: rule.id,
+        });
+      }
+
+      current = addDays(current, 1);
+    }
+  }
+
+  return result;
+}
+
 export interface RescheduleResult {
   success: boolean;
   message?: string;
@@ -128,6 +201,8 @@ interface AppState {
   settlements: Settlement[];
   masters: MasterDelivery[];
   blockouts: StudioBlockout[];
+  blockoutRules: BlockoutRule[];
+  blockoutsInitialized: boolean;
   currentUser: { role: 'ADMIN' | 'ARTIST'; artistId?: string };
   lastAllocationResults: Map<string, AllocationResult>;
   highlight: HighlightState | null;
@@ -146,7 +221,15 @@ interface AppState {
   addBlockout: (blockout: Omit<StudioBlockout, 'id'>) => void;
   updateBlockout: (id: string, updates: Partial<StudioBlockout>) => void;
   deleteBlockout: (id: string) => void;
+  deleteBlockoutsByRuleId: (ruleId: string) => void;
   getBlockoutsByStudioAndDate: (studioId: string, date: Date) => StudioBlockout[];
+  getAllEffectiveBlockouts: (startOfRange: Date, endOfRange: Date) => StudioBlockout[];
+
+  addBlockoutRule: (rule: Omit<BlockoutRule, 'id'>) => void;
+  updateBlockoutRule: (id: string, updates: Partial<BlockoutRule>) => void;
+  deleteBlockoutRule: (id: string) => void;
+  toggleBlockoutRule: (id: string) => void;
+  getBlockoutRuleLabel: (recurrence: RecurrencePattern) => string;
 
   createBooking: (request: BookingRequest) => Booking;
   allocateSingleBooking: (bookingId: string) => AllocationResult | null;
@@ -189,14 +272,16 @@ export const useAppStore = create<AppState>((set, get) => ({
   settlements:
     persisted?.settlements && persisted.settlements.length > 0 ? persisted.settlements : mockSettlements,
   masters: persisted?.masters && persisted.masters.length > 0 ? persisted.masters : mockMasters,
-  blockouts: persisted?.blockouts && persisted.blockouts.length > 0 ? persisted.blockouts : mockBlockouts,
+  blockouts: persisted ? persisted.blockouts : [],
+  blockoutRules: persisted?.blockoutRules && persisted.blockoutRules.length > 0 ? persisted.blockoutRules : mockBlockoutRules,
+  blockoutsInitialized: persisted?.blockoutsInitialized ?? false,
   currentUser: { role: 'ADMIN' },
   lastAllocationResults: new Map(),
   highlight: null,
 
   persist: () => {
-    const { studios, artists, bookings, tiers, settlements, masters, blockouts } = get();
-    saveToStorage({ studios, artists, bookings, tiers, settlements, masters, blockouts });
+    const { studios, artists, bookings, tiers, settlements, masters, blockouts, blockoutRules, blockoutsInitialized } = get();
+    saveToStorage({ studios, artists, bookings, tiers, settlements, masters, blockouts, blockoutRules, blockoutsInitialized });
   },
 
   resetToDefaults: () => {
@@ -208,7 +293,9 @@ export const useAppStore = create<AppState>((set, get) => ({
       tiers: mockTiers,
       settlements: mockSettlements,
       masters: mockMasters,
-      blockouts: mockBlockouts,
+      blockouts: [],
+      blockoutRules: mockBlockoutRules,
+      blockoutsInitialized: true,
       highlight: null,
     });
   },
@@ -259,8 +346,66 @@ export const useAppStore = create<AppState>((set, get) => ({
   deleteBlockout: (id) => {
     set((state) => ({
       blockouts: state.blockouts.filter((b) => b.id !== id),
+      blockoutsInitialized: true,
     }));
     get().persist();
+  },
+
+  deleteBlockoutsByRuleId: (ruleId) => {
+    set((state) => ({
+      blockouts: state.blockouts.filter((b) => b.ruleId !== ruleId),
+      blockoutsInitialized: true,
+    }));
+    get().persist();
+  },
+
+  getAllEffectiveBlockouts: (startOfRange, endOfRange) => {
+    const { blockouts, blockoutRules } = get();
+    const manual = blockouts.filter(
+      (b) => b.startTime <= endOfRange && b.endTime >= startOfRange
+    );
+    const expanded = expandBlockoutRules(blockoutRules, startOfRange, endOfRange);
+    return [...manual, ...expanded];
+  },
+
+  addBlockoutRule: (rule) => {
+    set((state) => ({
+      blockoutRules: [...state.blockoutRules, { ...rule, id: generateId() }],
+    }));
+    get().persist();
+  },
+
+  updateBlockoutRule: (id, updates) => {
+    set((state) => ({
+      blockoutRules: state.blockoutRules.map((r) => (r.id === id ? { ...r, ...updates } : r)),
+    }));
+    get().persist();
+  },
+
+  deleteBlockoutRule: (id) => {
+    set((state) => ({
+      blockoutRules: state.blockoutRules.filter((r) => r.id !== id),
+    }));
+    get().deleteBlockoutsByRuleId(id);
+  },
+
+  toggleBlockoutRule: (id) => {
+    set((state) => ({
+      blockoutRules: state.blockoutRules.map((r) =>
+        r.id === id ? { ...r, isActive: !r.isActive } : r
+      ),
+    }));
+    get().persist();
+  },
+
+  getBlockoutRuleLabel: (recurrence) => {
+    const labels: Record<RecurrencePattern, string> = {
+      DAILY: '每天',
+      WEEKLY: '每周',
+      MONTHLY: '每月',
+      YEARLY: '每年',
+    };
+    return labels[recurrence];
   },
 
   getBlockoutsByStudioAndDate: (studioId, date) => {

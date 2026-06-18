@@ -3,6 +3,7 @@ export type BookingStatus = 'PENDING' | 'ALLOCATED' | 'CONFIRMED' | 'COMPLETED' 
 export type SettlementStatus = 'UNSETTLED' | 'SETTLED';
 export type UserRole = 'ADMIN' | 'ARTIST';
 export type BlockoutType = 'MAINTENANCE' | 'HOLIDAY' | 'PRIVATE' | 'OTHER';
+export type RecurrencePattern = 'DAILY' | 'WEEKLY' | 'MONTHLY' | 'YEARLY';
 
 export interface StudioBlockout {
   id: string;
@@ -12,12 +13,30 @@ export interface StudioBlockout {
   type: BlockoutType;
   reason: string;
   isAllDay: boolean;
+  ruleId?: string;
+}
+
+export interface BlockoutRule {
+  id: string;
+  studioId: string;
+  type: BlockoutType;
+  reason: string;
+  isAllDay: boolean;
+  startTime: string;
+  endTime: string;
+  recurrence: RecurrencePattern;
+  dayOfWeek?: number;
+  dayOfMonth?: number;
+  isActive: boolean;
 }
 
 export interface HighlightState {
   bookingId?: string;
   settlementId?: string;
   masterId?: string;
+  studioId?: string;
+  artistId?: string;
+  month?: string;
   timestamp: number;
 }
 

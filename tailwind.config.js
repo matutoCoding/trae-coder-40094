@@ -48,6 +48,7 @@ export default {
       animation: {
         'fade-in': 'fadeIn 0.3s ease-in-out',
         'slide-up': 'slideUp 0.4s ease-out',
+        'slide-in-right': 'slideInRight 0.3s ease-out',
         'pulse-gold': 'pulseGold 2s ease-in-out infinite',
       },
       keyframes: {
@@ -58,6 +59,10 @@ export default {
         slideUp: {
           '0%': { opacity: '0', transform: 'translateY(20px)' },
           '100%': { opacity: '1', transform: 'translateY(0)' },
+        },
+        slideInRight: {
+          '0%': { transform: 'translateX(100%)' },
+          '100%': { transform: 'translateX(0)' },
         },
         pulseGold: {
           '0%, 100%': { boxShadow: '0 0 20px rgba(212, 175, 55, 0.2)' },

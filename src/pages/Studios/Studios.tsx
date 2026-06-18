@@ -67,7 +67,7 @@ interface BlockoutFormData {
 interface BlockoutRuleFormData {
   recurrence: RecurrencePattern;
   dayOfWeek: number;
-  dayOfMonth: number;
+  dayOfMonth: number | 'LAST_DAY';
   startTime: string;
   endTime: string;
   type: BlockoutType;
@@ -159,6 +159,8 @@ export function Studios() {
   const [rescheduleDuration, setRescheduleDuration] = useState(1);
   const [rescheduleResult, setRescheduleResult] = useState<RescheduleResult | null>(null);
   const [rescheduleSuccess, setRescheduleSuccess] = useState(false);
+  const [selectedStudioFilter, setSelectedStudioFilter] = useState<string | null>(null);
+  const [showLockBanner, setShowLockBanner] = useState(false);
 
   const usageStats = useMemo(() => {
     return getAllStudiosUsageStats(studios, bookings);
@@ -200,6 +202,11 @@ export function Studios() {
     }
     return map;
   }, [blockoutRules]);
+
+  const filteredStudios = useMemo(() => {
+    if (!selectedStudioFilter) return studios;
+    return studios.filter((s) => s.id === selectedStudioFilter);
+  }, [studios, selectedStudioFilter]);
 
   const getUtilizationRate = (studioId: string) => {
     const stat = usageStats.find((s) => s.studioId === studioId);
@@ -297,7 +304,7 @@ export function Studios() {
       studioId: selectedStudioForBlockout.id,
       recurrence: ruleFormData.recurrence,
       dayOfWeek: ruleFormData.recurrence === 'WEEKLY' ? ruleFormData.dayOfWeek : undefined,
-      dayOfMonth: ruleFormData.recurrence === 'MONTHLY' || ruleFormData.recurrence === 'YEARLY' ? ruleFormData.dayOfMonth : undefined,
+      dayOfMonth: (ruleFormData.recurrence === 'MONTHLY' || ruleFormData.recurrence === 'YEARLY') ? ruleFormData.dayOfMonth : undefined,
       startTime: ruleFormData.isAllDay ? '00:00' : ruleFormData.startTime,
       endTime: ruleFormData.isAllDay ? '23:59' : ruleFormData.endTime,
       type: ruleFormData.type,
@@ -417,6 +424,7 @@ export function Studios() {
   useEffect(() => {
     if (!highlight?.studioId) return;
 
+    setSelectedStudioFilter(highlight.studioId);
     setViewMode('calendar');
 
     if (highlight.month) {
@@ -427,13 +435,9 @@ export function Studios() {
 
     const studio = getStudioById(highlight.studioId);
     setHighlightStudioName(studio?.name || null);
+    setShowLockBanner(true);
 
-    const timer = setTimeout(() => {
-      clearHighlight();
-      setHighlightStudioName(null);
-    }, 3000);
-
-    return () => clearTimeout(timer);
+    clearHighlight();
   }, [highlight?.studioId, highlight?.timestamp]);
 
   return (
@@ -473,6 +477,36 @@ export function Studios() {
                 日历
               </button>
             </div>
+            <div className="relative">
+              <select
+                value={selectedStudioFilter || ''}
+                onChange={(e) => {
+                  const value = e.target.value;
+                  setSelectedStudioFilter(value || null);
+                  if (!value) {
+                    setShowLockBanner(false);
+                  }
+                }}
+                className="appearance-none bg-bg-secondary border border-gold/20 rounded-lg px-4 py-2 pr-10 text-sm text-text-primary focus:outline-none focus:border-gold/50 transition-colors cursor-pointer"
+              >
+                <option value="">全部棚位</option>
+                {studios.map((studio) => (
+                  <option key={studio.id} value={studio.id}>
+                    {studio.name}
+                  </option>
+                ))}
+              </select>
+              <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none">
+                <ChevronRight className="w-4 h-4 text-text-muted rotate-90" />
+              </div>
+              {selectedStudioFilter && (
+                <style>{`
+                  select option[value="${selectedStudioFilter}"] {
+                    color: #D4AF37;
+                  }
+                `}</style>
+              )}
+            </div>
             <button
               onClick={handleAddStudio}
               className="flex items-center gap-2 btn-gold"
@@ -483,18 +517,30 @@ export function Studios() {
           </div>
         </div>
 
-        {highlightStudioName && (
-          <div className="mb-6 px-5 py-3 rounded-xl bg-gold/15 border-2 border-gold/40 flex items-center gap-3 animate-pulse">
-            <div className="w-2.5 h-2.5 rounded-full bg-gold" />
-            <span className="text-gold font-semibold text-sm">
-              正在查看 {highlightStudioName} 录音棚的排期
-            </span>
+        {showLockBanner && highlightStudioName && (
+          <div className="mb-6 px-5 py-3 rounded-xl bg-gold/15 border-2 border-gold/40 flex items-center justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <div className="w-2.5 h-2.5 rounded-full bg-gold" />
+              <span className="text-gold font-semibold text-sm">
+                已锁定到 {highlightStudioName} 录音棚
+              </span>
+            </div>
+            <button
+              onClick={() => {
+                setSelectedStudioFilter(null);
+                setShowLockBanner(false);
+                setHighlightStudioName(null);
+              }}
+              className="px-3 py-1.5 text-xs font-medium bg-gold/20 text-gold rounded-lg hover:bg-gold/30 transition-colors"
+            >
+              解除锁定
+            </button>
           </div>
         )}
 
         {viewMode === 'list' ? (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {studios.map((studio) => {
+            {filteredStudios.map((studio) => {
               const utilizationRate = getUtilizationRate(studio.id);
               return (
                 <div
@@ -688,7 +734,7 @@ export function Studios() {
                   ))}
                 </div>
 
-                {studios
+                {filteredStudios
                   .filter((s) => s.isActive)
                   .map((studio, studioIndex) => (
                     <div
@@ -1407,10 +1453,17 @@ export function Studios() {
                         <label className="block text-sm font-medium text-text-primary mb-2">日期（每月几号）</label>
                         <select
                           value={ruleFormData.dayOfMonth}
-                          onChange={(e) => setRuleFormData({ ...ruleFormData, dayOfMonth: Number(e.target.value) })}
+                          onChange={(e) => {
+                            const value = e.target.value;
+                            setRuleFormData({
+                              ...ruleFormData,
+                              dayOfMonth: value === 'LAST_DAY' ? 'LAST_DAY' : Number(value),
+                            });
+                          }}
                           className="input-field"
                           required
                         >
+                          <option value="LAST_DAY">每月最后一天</option>
                           {Array.from({ length: 31 }, (_, i) => i + 1).map((d) => (
                             <option key={d} value={d}>{d}号</option>
                           ))}
@@ -1560,7 +1613,9 @@ export function Studios() {
                                   {rule.recurrence === 'WEEKLY' && rule.dayOfWeek !== undefined
                                     ? WEEKDAY_LABELS[rule.dayOfWeek]
                                     : rule.recurrence === 'MONTHLY' || rule.recurrence === 'YEARLY'
-                                    ? `${rule.recurrence === 'YEARLY' ? '1月' : ''}${rule.dayOfMonth}号`
+                                    ? rule.dayOfMonth === 'LAST_DAY'
+                                      ? '月末'
+                                      : `${rule.recurrence === 'YEARLY' ? '1月' : ''}${rule.dayOfMonth}号`
                                     : ''}
                                   {' '}
                                   {rule.isAllDay ? '全天' : `${rule.startTime} - ${rule.endTime}`}

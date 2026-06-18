@@ -34,6 +34,7 @@ export function Settlement() {
   const {
     settlements,
     artists,
+    studios,
     batchMarkSettlementsPaid,
     markSettlementPaid,
     getBookingById,
@@ -56,6 +57,7 @@ export function Settlement() {
   const [isExporting, setIsExporting] = useState(false);
   const [selectedMonth, setSelectedMonth] = useState<string>(defaultMonth);
   const [selectedArtistId, setSelectedArtistId] = useState<string>('all');
+  const [selectedStudioId, setSelectedStudioId] = useState<string>('all');
   const [selectedStatus, setSelectedStatus] = useState<SettlementStatus | 'all'>('all');
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [isBatchModalOpen, setIsBatchModalOpen] = useState(false);
@@ -65,7 +67,10 @@ export function Settlement() {
   const highlightClearTimerRef = useRef<NodeJS.Timeout | null>(null);
   const [isDetailOpen, setIsDetailOpen] = useState(false);
   const [detailBookingId, setDetailBookingId] = useState<string>('');
-  const [studioNameForBanner, setStudioNameForBanner] = useState<string>('');
+  const [showStudioLockBanner, setShowStudioLockBanner] = useState(false);
+  const [studioLockName, setStudioLockName] = useState<string>('');
+  const [successToast, setSuccessToast] = useState<{ show: boolean; amount: number }>({ show: false, amount: 0 });
+  const successToastTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   const monthOptions = useMemo(() => {
     const options: { value: string; label: string }[] = [];
@@ -93,6 +98,12 @@ export function Settlement() {
           return false;
         }
       }
+      if (selectedStudioId !== 'all') {
+        const studioId = getBookingById(s.bookingId)?.studioId;
+        if (!studioId || studioId !== selectedStudioId) {
+          return false;
+        }
+      }
       if (selectedStatus !== 'all' && s.status !== selectedStatus) {
         return false;
       }
@@ -102,7 +113,7 @@ export function Settlement() {
         new Date(b.settlementDate).getTime() -
         new Date(a.settlementDate).getTime()
     );
-  }, [settlements, selectedMonth, selectedArtistId, selectedStatus, getBookingById]);
+  }, [settlements, selectedMonth, selectedArtistId, selectedStudioId, selectedStatus, getBookingById]);
 
   const totalRevenue = useMemo(
     () => filteredSettlements.reduce((sum, s) => sum + s.totalAmount, 0),
@@ -203,12 +214,12 @@ export function Settlement() {
     }
 
     if (highlight.studioId) {
+      setSelectedStudioId(highlight.studioId);
       const studio = getStudioById(highlight.studioId);
       if (studio) {
-        setStudioNameForBanner(studio.name);
+        setStudioLockName(studio.name);
+        setShowStudioLockBanner(true);
       }
-    } else {
-      setStudioNameForBanner('');
     }
 
     setSelectedStatus('all');
@@ -220,6 +231,13 @@ export function Settlement() {
         const artist = getArtistById(booking.artistId);
         if (artist) {
           setSelectedArtistId(artist.id);
+        }
+      }
+      if (booking && !highlight.studioId && booking.studioId) {
+        const studio = getStudioById(booking.studioId);
+        if (studio) {
+          setStudioLockName(studio.name);
+          setShowStudioLockBanner(true);
         }
       }
       const settlement = getSettlementByBookingId(bookingId);
@@ -261,13 +279,30 @@ export function Settlement() {
       });
       return filteredIds;
     });
-  }, [selectedMonth, selectedArtistId, selectedStatus]);
+  }, [selectedMonth, selectedArtistId, selectedStudioId, selectedStatus]);
+
+  useEffect(() => {
+    if (selectedMonth === defaultMonth && selectedArtistId === 'all' && selectedStudioId === 'all' && selectedStatus === 'all') {
+      setShowStudioLockBanner(false);
+    }
+  }, [selectedMonth, selectedArtistId, selectedStudioId, selectedStatus, defaultMonth]);
 
   const handleResetFilters = () => {
     setSelectedMonth(defaultMonth);
     setSelectedArtistId('all');
+    setSelectedStudioId('all');
     setSelectedStatus('all');
     setSelectedIds(new Set());
+    setShowStudioLockBanner(false);
+  };
+
+  const handleClearStudioLock = () => {
+    setSelectedMonth(defaultMonth);
+    setSelectedArtistId('all');
+    setSelectedStudioId('all');
+    setSelectedStatus('all');
+    setSelectedIds(new Set());
+    setShowStudioLockBanner(false);
   };
 
   const toggleRow = (id: string) => {
@@ -292,7 +327,17 @@ export function Settlement() {
 
   const handleMarkPaid = (settlementId: string, e: MouseEvent) => {
     e.stopPropagation();
+    const settlement = settlements.find((s) => s.id === settlementId);
     markSettlementPaid(settlementId);
+    if (settlement) {
+      setSuccessToast({ show: true, amount: settlement.totalAmount });
+      if (successToastTimerRef.current) {
+        clearTimeout(successToastTimerRef.current);
+      }
+      successToastTimerRef.current = setTimeout(() => {
+        setSuccessToast({ show: false, amount: 0 });
+      }, 3000);
+    }
   };
 
   const handleSelectRow = (id: string, e: ChangeEvent<HTMLInputElement>) => {
@@ -651,7 +696,7 @@ export function Settlement() {
       </div>
 
       <div className="card">
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 items-end">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4 items-end">
           <div>
             <label className="block text-sm font-medium text-text-muted mb-2">
               月份
@@ -681,6 +726,23 @@ export function Settlement() {
               {artists.map((artist) => (
                 <option key={artist.id} value={artist.id}>
                   {artist.name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-text-muted mb-2">
+              录音棚
+            </label>
+            <select
+              value={selectedStudioId}
+              onChange={(e) => setSelectedStudioId(e.target.value)}
+              className="input-field"
+            >
+              <option value="all">全部棚位</option>
+              {studios.map((studio) => (
+                <option key={studio.id} value={studio.id}>
+                  {studio.name}
                 </option>
               ))}
             </select>
@@ -738,6 +800,15 @@ export function Settlement() {
         />
       </div>
 
+      {successToast.show && (
+        <div className="fixed top-4 right-4 z-50 flex items-center gap-3 px-5 py-3 rounded-xl bg-gradient-to-r from-gold/20 via-gold/10 to-gold/20 border border-gold/30 shadow-lg animate-slide-up">
+          <CheckCircle2 className="w-5 h-5 text-gold flex-shrink-0" />
+          <p className="text-gold font-medium">
+            已标记为已结算 {formatCurrency(successToast.amount)}
+          </p>
+        </div>
+      )}
+
       {showNoSettlementBanner && (
         <div className="flex items-center justify-between p-4 rounded-xl bg-gradient-to-r from-gold/20 via-gold/10 to-gold/20 border border-gold/30 animate-slide-up">
           <div className="flex items-center gap-3">
@@ -755,19 +826,19 @@ export function Settlement() {
         </div>
       )}
 
-      {studioNameForBanner && (
-        <div className="flex items-center justify-between p-4 rounded-xl bg-gradient-to-r from-neon-purple/20 via-neon-purple/10 to-neon-purple/20 border border-neon-purple/30 animate-slide-up">
+      {showStudioLockBanner && studioLockName && (
+        <div className="flex items-center justify-between p-4 rounded-xl bg-gradient-to-r from-gold/20 via-gold/10 to-gold/20 border border-gold/30 animate-slide-up">
           <div className="flex items-center gap-3">
-            <Calendar className="w-5 h-5 text-neon-purple flex-shrink-0" />
-            <p className="text-neon-purple font-medium">
-              来自录音棚：{studioNameForBanner}
+            <Calendar className="w-5 h-5 text-gold flex-shrink-0" />
+            <p className="text-gold font-medium">
+              已锁定到 {studioLockName} · {selectedMonth.split('-')[0]}年{selectedMonth.split('-')[1]}月
             </p>
           </div>
           <button
-            onClick={() => setStudioNameForBanner('')}
-            className="p-1.5 rounded-lg hover:bg-neon-purple/20 transition-colors"
+            onClick={handleClearStudioLock}
+            className="btn-gold text-xs py-1 px-3"
           >
-            <X className="w-4 h-4 text-neon-purple" />
+            清除筛选
           </button>
         </div>
       )}
@@ -1035,6 +1106,13 @@ export function Settlement() {
                       onClick={(e) => {
                         e.stopPropagation();
                         markSettlementPaid(settlement.id);
+                        setSuccessToast({ show: true, amount: settlement.totalAmount });
+                        if (successToastTimerRef.current) {
+                          clearTimeout(successToastTimerRef.current);
+                        }
+                        successToastTimerRef.current = setTimeout(() => {
+                          setSuccessToast({ show: false, amount: 0 });
+                        }, 3000);
                       }}
                       className="btn-gold flex items-center gap-2 text-sm w-full justify-center"
                     >
@@ -1154,7 +1232,7 @@ export function Settlement() {
                 <button
                   onClick={() => {
                     const month = format(booking.startTime, 'yyyy-MM');
-                    setHighlight({ bookingId: booking.id, artistId: booking.artistId, month });
+                    setHighlight({ studioId: booking.studioId || undefined, bookingId: booking.id, artistId: booking.artistId, month });
                     navigate('/masters');
                   }}
                   className="btn-gold flex items-center gap-2 text-sm flex-1 justify-center"

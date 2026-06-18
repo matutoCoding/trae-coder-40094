@@ -78,7 +78,7 @@ const mockBlockoutRules: BlockoutRule[] = [
     startTime: '00:00',
     endTime: '23:59',
     recurrence: 'MONTHLY',
-    dayOfMonth: 28,
+    dayOfMonth: 'LAST_DAY',
     isActive: true,
   },
 ];
@@ -154,7 +154,12 @@ export function expandBlockoutRules(rules: BlockoutRule[], startOfRange: Date, e
       if (rule.recurrence === 'WEEKLY' && rule.dayOfWeek !== undefined) {
         shouldApply = getDay(current) === rule.dayOfWeek;
       } else if (rule.recurrence === 'MONTHLY' && rule.dayOfMonth !== undefined) {
-        shouldApply = getDate(current) === rule.dayOfMonth;
+        if (rule.dayOfMonth === 'LAST_DAY') {
+          const lastDay = getDate(endOfMonth(current));
+          shouldApply = getDate(current) === lastDay;
+        } else {
+          shouldApply = getDate(current) === rule.dayOfMonth;
+        }
       } else if (rule.recurrence === 'DAILY') {
         shouldApply = true;
       } else if (rule.recurrence === 'YEARLY') {

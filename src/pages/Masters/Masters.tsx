@@ -50,6 +50,7 @@ export function Masters() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedArtistId, setSelectedArtistId] = useState<string>('');
   const [selectedMonth, setSelectedMonth] = useState<string>('');
+  const [selectedStudioId, setSelectedStudioId] = useState<string>('');
   const [isFilterOpen, setIsFilterOpen] = useState(false);
   const [formData, setFormData] = useState({
     bookingId: '',
@@ -60,6 +61,7 @@ export function Masters() {
   const [highlightedMasterIds, setHighlightedMasterIds] = useState<Set<string>>(new Set());
   const [showBanner, setShowBanner] = useState(false);
   const [bannerBookingId, setBannerBookingId] = useState<string>('');
+  const [bannerStudioId, setBannerStudioId] = useState<string>('');
   const [selectedBookingId, setSelectedBookingId] = useState<string | null>(null);
   const highlightClearTimerRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -86,6 +88,12 @@ export function Masters() {
       });
     }
 
+    if (selectedStudioId) {
+      filteredBookings = filteredBookings.filter(
+        (b) => b.studioId === selectedStudioId
+      );
+    }
+
     return filteredBookings.sort((a, b) => {
       const mastersA = getMastersByBookingId(a.id);
       const mastersB = getMastersByBookingId(b.id);
@@ -104,7 +112,7 @@ export function Masters() {
         new Date(latestA.deliveredAt).getTime()
       );
     });
-  }, [bookings, selectedArtistId, selectedMonth, getMastersByBookingId]);
+  }, [bookings, selectedArtistId, selectedMonth, selectedStudioId, getMastersByBookingId]);
 
   const selectedBooking = useMemo(() => {
     if (!selectedBookingId) return null;
@@ -189,6 +197,7 @@ export function Masters() {
     setHighlight({
       bookingId: selectedBooking.id,
       artistId: selectedBooking.artistId,
+      studioId: selectedBooking.studioId || undefined,
       month,
     });
     navigate('/settlement');
@@ -204,6 +213,13 @@ export function Masters() {
 
     if (highlight.month) {
       setSelectedMonth(highlight.month);
+    }
+
+    if (highlight.studioId) {
+      setSelectedStudioId(highlight.studioId);
+      setIsFilterOpen(true);
+      setBannerStudioId(highlight.studioId);
+      setShowBanner(true);
     }
 
     if (highlight.bookingId) {
@@ -234,7 +250,20 @@ export function Masters() {
         clearTimeout(highlightClearTimerRef.current);
       }
     };
-  }, [highlight?.bookingId, highlight?.artistId, highlight?.month, highlight?.timestamp, getBookingById, getMastersByBookingId, clearHighlight]);
+  }, [highlight?.bookingId, highlight?.artistId, highlight?.month, highlight?.studioId, highlight?.timestamp, getBookingById, getMastersByBookingId, clearHighlight]);
+
+  useEffect(() => {
+    if (showBanner && !selectedArtistId && !selectedMonth && !selectedStudioId) {
+      setShowBanner(false);
+    }
+  }, [selectedArtistId, selectedMonth, selectedStudioId, showBanner]);
+
+  const handleClearBannerFilter = () => {
+    setSelectedArtistId('');
+    setSelectedMonth('');
+    setSelectedStudioId('');
+    setShowBanner(false);
+  };
 
   return (
     <div className="space-y-6">
@@ -313,11 +342,30 @@ export function Masters() {
                 ))}
               </select>
             </div>
-            {(selectedArtistId || selectedMonth) && (
+            <div className="flex-1">
+              <label className="block text-sm font-medium text-text-primary mb-2">
+                <Building2 className="w-4 h-4 inline mr-2 text-gold" />
+                按棚位筛选
+              </label>
+              <select
+                value={selectedStudioId}
+                onChange={(e) => setSelectedStudioId(e.target.value)}
+                className="input-field"
+              >
+                <option value="">全部棚位</option>
+                {studios.map((studio) => (
+                  <option key={studio.id} value={studio.id}>
+                    {studio.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            {(selectedArtistId || selectedMonth || selectedStudioId) && (
               <button
                 onClick={() => {
                   setSelectedArtistId('');
                   setSelectedMonth('');
+                  setSelectedStudioId('');
                 }}
                 className="btn-ghost mt-6"
               >
@@ -359,16 +407,27 @@ export function Masters() {
       {showBanner && (
         <div className="flex items-center justify-between p-4 rounded-xl bg-gradient-to-r from-gold/20 via-gold/10 to-gold/20 border border-gold/30 animate-slide-up">
           <div className="flex items-center gap-3">
-            <Music className="w-5 h-5 text-gold flex-shrink-0" />
-            <p className="text-gold font-medium">
-              正在查看订单 #{bannerBookingId.slice(-3)} 的母带记录
-            </p>
+            {bannerStudioId ? (
+              <>
+                <Building2 className="w-5 h-5 text-gold flex-shrink-0" />
+                <p className="text-gold font-medium">
+                  已锁定到 {getStudioById(bannerStudioId)?.name || '未知录音棚'} · {selectedMonth ? `${selectedMonth.slice(0, 4)}年${selectedMonth.slice(5, 7)}月` : '全部月份'}
+                </p>
+              </>
+            ) : (
+              <>
+                <Music className="w-5 h-5 text-gold flex-shrink-0" />
+                <p className="text-gold font-medium">
+                  正在查看订单 #{bannerBookingId.slice(-3)} 的母带记录
+                </p>
+              </>
+            )}
           </div>
           <button
-            onClick={() => setShowBanner(false)}
-            className="p-1.5 rounded-lg hover:bg-gold/20 transition-colors"
+            onClick={handleClearBannerFilter}
+            className="btn-outline text-sm px-3 py-1.5 text-gold border-gold/30 hover:bg-gold/10"
           >
-            <X className="w-4 h-4 text-gold" />
+            清除筛选
           </button>
         </div>
       )}
@@ -381,11 +440,11 @@ export function Masters() {
               暂无母带记录
             </h3>
             <p className="text-text-muted mb-6">
-              {selectedArtistId || selectedMonth
+              {selectedArtistId || selectedMonth || selectedStudioId
                 ? '当前筛选条件下暂无母带交付记录'
                 : '点击右上角按钮添加第一条母带交付记录'}
             </p>
-            {!selectedArtistId && !selectedMonth && (
+            {!selectedArtistId && !selectedMonth && !selectedStudioId && (
               <button
                 onClick={() => setIsModalOpen(true)}
                 className="btn-gold inline-flex items-center gap-2"

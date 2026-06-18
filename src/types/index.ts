@@ -26,7 +26,7 @@ export interface BlockoutRule {
   endTime: string;
   recurrence: RecurrencePattern;
   dayOfWeek?: number;
-  dayOfMonth?: number;
+  dayOfMonth?: number | 'LAST_DAY';
   isActive: boolean;
 }
 
